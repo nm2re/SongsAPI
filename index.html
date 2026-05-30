@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Album Search</title>
+    <style>
+        .log-box {
+            background: #111;
+            color: #00ff00;
+            font-family: monospace;
+            font-size: 13px;
+            padding: 10px;
+            margin-top: 8px;
+            height: 180px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            display: none;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Album Search</h1>
+
+<input
+        type="text"
+        id="searchInput"
+        placeholder="Enter artist or album"
+>
+
+<button onclick="searchAlbums()">Search</button>
+
+<div id="results"></div>
+
+<script>
+    let currentResults = [];
+
+    async function searchAlbums() {
+        const query = document.getElementById("searchInput").value;
+
+        const response = await fetch(
+            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}`
+        );
+
+        const data = await response.json();
+        currentResults = data.results;
+
+        const resultsDiv = document.getElementById("results");
+        resultsDiv.innerHTML = "";
+
+        data.results.forEach(album => {
+            resultsDiv.innerHTML += `
+                <div id="album-${album.collection_id}">
+                    <h3>${album.album_name}</h3>
+                    <p>${album.artist}</p>
+                    <button onclick="downloadAlbum(${album.collection_id})">
+                        Download
+                    </button>
+                    <span id="status-${album.collection_id}"></span>
+                    <div class="log-box" id="log-${album.collection_id}"></div>
+                </div>
+                <hr>
+            `;
+        });
+    }
+
+    async function downloadAlbum(collectionId) {
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
+        const btn = document.querySelector(`#album-${collectionId} button`);
+
+        // Show the log box and lock the button
+        btn.disabled = true;
+        logBox.style.display = "block";
+        logBox.textContent = "";
+        statusEl.textContent = " Downloading...";
+
+        const response = await fetch("http://localhost:8000/albums/download", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                collection_id: collectionId,
+                results: currentResults
+            })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            // SSE lines look like "data: some text\n\n" — strip the prefix
+            const text = decoder.decode(value);
+            const lines = text.split("\n").filter(l => l.startsWith("data: "));
+
+            for (const line of lines) {
+                const content = line.replace("data: ", "");
+
+                if (content === "[DONE]") {
+                    statusEl.textContent = " ✓ Downloaded";
+                    btn.disabled = false;
+                    return;
+                }
+
+                if (content.startsWith("[ERROR]")) {
+                    statusEl.textContent = ` ✗ ${content}`;
+                    btn.disabled = false;
+                    return;
+                }
+
+                // Append each gamdl output line to the log box
+                logBox.textContent += content + "\n";
+                logBox.scrollTop = logBox.scrollHeight; // auto-scroll to bottom
+            }
+        }
+    }
+</script>
+
+</body>
+</html>
