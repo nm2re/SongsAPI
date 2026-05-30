@@ -1,4 +1,5 @@
 import queue
+import shutil
 import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -8,21 +9,18 @@ import subprocess
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 from pathlib import Path
+from Links import Link
 import os
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])  # Replace Allow origins with proper url later when deploying
-ITUNES_URL = "https://itunes.apple.com/search"
-DOWNLOAD_DIR = Path("C:/Users/Administrator/Downloads/Albums")
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)  # creates a parent for you incase you dont have one (directory)
-COOKIES_URL = Path("C:/Users/Administrator/cookies.txt")
 
+Link.setup() # setup .mkdir() function
 
 class DownloadRequest(BaseModel):
     collection_id: int
     results: list[dict]  # Full list of search results to pick the album from
-
 
 @app.get("/")
 def home():
@@ -40,11 +38,10 @@ def searchAlbum(q: str, limit: int = 10):
     :return:
     """
 
-    response = requests.get(ITUNES_URL, params={"term": q, "entity": "album", "limit": limit})
+    response = requests.get(Link.ITUNES_URL, params={"term": q, "entity": "album", "limit": limit})
     results = response.json()["results"]
 
     albums = []
-
     for i, album in enumerate(results):
         albums.append(
             {
@@ -62,11 +59,9 @@ def searchAlbum(q: str, limit: int = 10):
 async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
     """
     Selected albums will be downloaded
-    :return:
     """
 
     match = None
-
     for album in body.results:
         if album["collection_id"] == body.collection_id:
             match = album
@@ -80,7 +75,7 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
     async def streamOutput():
         process = subprocess.Popen(
 
-            ["gamdl", "--cookies-path", COOKIES_URL, "--output-path", DOWNLOAD_DIR, url],
+            ["gamdl", "--cookies-path", Link.COOKIES_URL, "--output-path", Link.DOWNLOAD_DIR, url],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,  # i maybe autistic but this might be good merging stderr + stdout
             text=True,
@@ -89,7 +84,6 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         )
 
         q = queue.Queue()
-
         def enqueue(stream, label):
             for line in stream:
                 q.put((label, line.rstrip()))
@@ -102,7 +96,6 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         t2.start()
 
         finished = 0
-
         while finished < 2:  # if thread is still running
             label, line = q.get()
             if line is None:
@@ -114,6 +107,21 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         t1.join()
         t2.join()
         process.wait()
+
+        def renameFolder(artist, album):
+            artist_dir = Link.DOWNLOAD_DIR / artist
+            old_album = artist_dir / album
+            new_name = Link.DOWNLOAD_DIR / f"{artist} - {album}"
+
+            if old_album.exists():
+                shutil.move(str(old_album), str(new_name))
+                print(f"[rename] {old_album} -> {new_name}", flush=True)
+
+            # removing of the old artist folder
+            if not any(artist_dir.iterdir()):
+                artist_dir.rmdir()
+
+        renameFolder(match["artist"], match["album_name"]) # renaming the folder to "artist - album name" instead of "artist/album name"
         print(f"[gamdl exited with code {process.returncode}]\n\n")
 
         if process.returncode != 0:
@@ -126,3 +134,7 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+
+
