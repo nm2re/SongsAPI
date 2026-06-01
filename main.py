@@ -77,9 +77,10 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
 
     async def streamOutput():
         process = subprocess.Popen( # args containing wrapper elements
-            ["gamdl", "--cookies-path", Link.COOKIES_URL, "--output-path", Link.DOWNLOAD_DIR, url],
+            # ["gamdl", "--cookies-path", Link.COOKIES_URL, "--output-path", Link.DOWNLOAD_DIR, url],
+            ["gamdl", "--song-codec-priority", "alac", "--use-wrapper", "--wrapper-account-url", Link.WRAPPER_ACCOUNT_URL, "--wrapper-m3u8-ip", Link.WRAPPER_M3U8_IP, "--wrapper-decrypt-ip", Link.WRAPPER_DECRYPT_IP, "--output-path", Link.DOWNLOAD_DIR, url],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,  # i maybe autistic but this might be good merging stderr + stdout
+            stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
             text=True,
             bufsize=0,  # 0 buffering
             env={**os.environ, "PYTHONUNBUFFERED": "1"}  # forcing gamdl to flush each line
@@ -87,9 +88,14 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
 
         q = queue.Queue()
         def enqueue(stream, label):
+            # for line in stream:
+            #     q.put((label, line.rstrip()))
+            # q.put((label, None))  # i think this queue tells the other queue its done
             for line in stream:
-                q.put((label, line.rstrip()))
-            q.put((label, None))  # i think this queue tells the other queue its done
+                stripped = line.rstrip()
+                if not stripped.startswith("[download]"):
+                    q.put((label,stripped))
+            q.put((label, None))
 
         t1 = threading.Thread(target=enqueue, args=(process.stdout, "stdout"))
         t2 = threading.Thread(target=enqueue, args=(process.stderr, "stderr"))
@@ -129,7 +135,15 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         if process.returncode == 0:
             folder = Link.DOWNLOAD_DIR / f"{match['artist']} - {match['album_name']}"
             update_year(str(folder), match["year"])
-            yield "data: [DONE]\n\n"
+
+            # Convert the album to FLAC
+            yield "data: [Converting to FLAC...]\n\n"
+            convert_response = convertToFLAC(ConvertRequest(artist=match['artist'], album_name=match['album_name'])) # passing the request as arguments
+
+            if convert_response["status"] == "success":
+                yield "data: [DONE]\n\n"
+            else:
+                yield f"data: [CONVERSION FAILED]\n\n"
         else:
             yield f"data: [ERROR] gamdl exited with code {process.returncode}\n\n"
 
@@ -139,12 +153,9 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
-
-
 class MetadataRequest(BaseModel):
     folder: str
     year: str
-
 
 def update_year(folder: str, year: str):
     folder = Path(folder)
@@ -177,6 +188,37 @@ def updateYear(body: MetadataRequest):
     changed = update_year(str(folder), body.year)
 
     return {"updated" : changed, "year" : body.year}
+
+
+class ConvertRequest(BaseModel): # a structure to help write the functions based on the artist and album name instead of the folder name which can be different based on the gamdl version and settings
+    artist: str
+    album_name: str
+
+@app.post("/albums/convert-flac")
+def convertToFLAC(body: ConvertRequest): # class folder structure is used here to use artist and album_name
+    """
+    This function runs a powershell command script to convert the folder containing the .m4a files into .flac
+    :return:
+    """
+
+    folder = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
+    script_path = Link.DOWNLOAD_DIR / Link.CONVERT_TO_FLAC
+    result = subprocess.Popen(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path, "-FolderPath", folder],  # powershell command to convert m4a to flac using ffmpeg
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=0
+    )
+
+    stdout, stderr = result.communicate()
+
+    if result.returncode == 0:
+        print(stdout, flush=True)
+        return {"status": "success", "message": stdout}
+    else:
+        print(stderr, flush=True)
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {stderr}")
 
 
 
