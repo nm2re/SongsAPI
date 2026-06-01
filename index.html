@@ -1,79 +1,490 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Album Search</title>
+    <meta charset="UTF-8">
+    <title>Re;vault</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg: #080808;
+            --surface: #111111;
+            --border: #1e1e1e;
+            --border-bright: #2e2e2e;
+            --text: #e8e8e8;
+            --muted: #555;
+            --accent: #c8ff00;
+            --accent-dim: #8aad00;
+            --red: #ff4444;
+            --green: #00ff88;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            min-height: 100vh;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        /* Grain overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0.4;
+        }
+
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 24px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 2rem;
+            letter-spacing: 0.15em;
+            color: var(--accent);
+        }
+
+        .logo span {
+            color: var(--muted);
+            font-size: 0.75rem;
+            font-family: 'DM Mono', monospace;
+            letter-spacing: 0.2em;
+            display: block;
+            margin-top: -4px;
+        }
+
+        .status-bar {
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .status-bar .dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 48px 40px;
+        }
+
+        .search-section {
+            margin-bottom: 48px;
+        }
+
+        .search-label {
+            font-size: 10px;
+            letter-spacing: 0.25em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+
+        .search-row {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--border-bright);
+            background: var(--surface);
+            transition: border-color 0.2s;
+        }
+
+        .search-row:focus-within {
+            border-color: var(--accent);
+        }
+
+        .search-row input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            padding: 14px 20px;
+            font-family: 'DM Mono', monospace;
+            font-size: 14px;
+            outline: none;
+            letter-spacing: 0.05em;
+        }
+
+        .search-row input::placeholder { color: var(--muted); }
+
+        .search-row button {
+            background: var(--accent);
+            border: none;
+            color: #000;
+            padding: 14px 28px;
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.1rem;
+            letter-spacing: 0.15em;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .search-row button:hover { background: #d9ff1a; }
+        .search-row button:active { background: var(--accent-dim); }
+
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .results-label {
+            font-size: 10px;
+            letter-spacing: 0.25em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .results-count {
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+        }
+
+        .album-card {
+            border: 1px solid var(--border);
+            background: var(--surface);
+            margin-bottom: 2px;
+            transition: border-color 0.15s, background 0.15s;
+            animation: slideIn 0.3s ease both;
+        }
+
+        .album-card:hover {
+            border-color: var(--border-bright);
+            background: #161616;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .album-card-inner {
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .album-index {
+            font-size: 11px;
+            color: var(--muted);
+            width: 24px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .album-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .album-name {
+            font-size: 14px;
+            color: var(--text);
+            letter-spacing: 0.03em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 500;
+        }
+
+        .album-meta {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 3px;
+            letter-spacing: 0.05em;
+        }
+
+        .album-year {
+            color: var(--accent-dim);
+            margin-left: 8px;
+        }
+
+        .album-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .btn {
+            border: 1px solid var(--border-bright);
+            background: transparent;
+            color: var(--muted);
+            padding: 7px 16px;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-transform: uppercase;
+        }
+
+        .btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            border-color: var(--border);
+            color: var(--muted);
+        }
+
+        .btn-move {
+            border-color: #2a2a2a;
+        }
+
+        .btn-move:hover {
+            border-color: #888;
+            color: var(--text);
+        }
+
+        .overwrite-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            padding: 4px 0;
+        }
+
+        .overwrite-toggle input[type="checkbox"] {
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border: 1px solid var(--border-bright);
+            background: transparent;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+            transition: all 0.15s;
+        }
+
+        .overwrite-toggle input[type="checkbox"]:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .overwrite-toggle input[type="checkbox"]:checked::after {
+            content: '';
+            position: absolute;
+            left: 3px;
+            top: 1px;
+            width: 5px;
+            height: 8px;
+            border: 2px solid #000;
+            border-top: none;
+            border-left: none;
+            transform: rotate(45deg);
+        }
+
+        .overwrite-label {
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            user-select: none;
+        }
+
+        .status-tag {
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 4px 10px;
+            border: 1px solid transparent;
+        }
+
+        .status-tag.downloading { color: var(--accent); border-color: var(--accent-dim); }
+        .status-tag.done { color: var(--green); border-color: #004422; }
+        .status-tag.error { color: var(--red); border-color: #440000; }
+        .status-tag.moving { color: #888; border-color: #333; }
+        .status-tag.moved { color: var(--text); border-color: #333; }
+
         .log-box {
-            background: #111;
-            color: #00ff00;
-            font-family: monospace;
-            font-size: 13px;
-            padding: 10px;
-            margin-top: 8px;
-            height: 180px;
+            border-top: 1px solid var(--border);
+            background: #050505;
+            color: var(--accent);
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            padding: 12px 20px 12px 64px;
+            max-height: 160px;
             overflow-y: auto;
             white-space: pre-wrap;
             display: none;
-            border-radius: 4px;
+            line-height: 1.6;
+            letter-spacing: 0.03em;
+        }
+
+        .log-box::-webkit-scrollbar { width: 4px; }
+        .log-box::-webkit-scrollbar-track { background: transparent; }
+        .log-box::-webkit-scrollbar-thumb { background: var(--border-bright); }
+
+        /* staggered animation delays */
+        .album-card:nth-child(1) { animation-delay: 0ms; }
+        .album-card:nth-child(2) { animation-delay: 40ms; }
+        .album-card:nth-child(3) { animation-delay: 80ms; }
+        .album-card:nth-child(4) { animation-delay: 120ms; }
+        .album-card:nth-child(5) { animation-delay: 160ms; }
+        .album-card:nth-child(6) { animation-delay: 200ms; }
+        .album-card:nth-child(7) { animation-delay: 240ms; }
+        .album-card:nth-child(8) { animation-delay: 280ms; }
+        .album-card:nth-child(9) { animation-delay: 320ms; }
+        .album-card:nth-child(10) { animation-delay: 360ms; }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 0;
+            color: var(--muted);
+            font-size: 12px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+        }
+
+        .empty-state .big {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 4rem;
+            color: #1a1a1a;
+            letter-spacing: 0.2em;
+            display: block;
+            margin-bottom: 12px;
         }
     </style>
 </head>
 <body>
 
-<h1>Album Search</h1>
+<header>
+    <div class="logo">
+        RE;VAULT
+        <span>Apple Music Downloader</span>
+    </div>
+    <div class="status-bar">
+        <span class="dot"></span>API READY — localhost:8000
+    </div>
+</header>
 
-<input
-        type="text"
-        id="searchInput"
-        placeholder="Enter artist or album"
->
+<main>
+    <div class="search-section">
+        <div class="search-label">Search Albums</div>
+        <div class="search-row">
+            <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="Artist or album name..."
+                    onkeydown="if(event.key==='Enter') searchAlbums()"
+            >
+            <button onclick="searchAlbums()">Search</button>
+        </div>
+    </div>
 
-<button onclick="searchAlbums()">Search</button>
-
-<div id="results"></div>
+    <div id="results">
+        <div class="empty-state">
+            <span class="big">SEARCH</span>
+            Enter an artist or album above to get started
+        </div>
+    </div>
+</main>
 
 <script>
     let currentResults = [];
 
     async function searchAlbums() {
-        const query = document.getElementById("searchInput").value;
+        const query = document.getElementById("searchInput").value.trim();
+        if (!query) return;
+
+        const resultsDiv = document.getElementById("results");
+        resultsDiv.innerHTML = `<div class="empty-state"><span class="big">...</span>Searching</div>`;
 
         const response = await fetch(
-            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}`
+            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}&limit=10`
         );
 
         const data = await response.json();
         currentResults = data.results;
 
-        const resultsDiv = document.getElementById("results");
-        resultsDiv.innerHTML = "";
+        if (!data.results.length) {
+            resultsDiv.innerHTML = `<div class="empty-state"><span class="big">NONE</span>No results found</div>`;
+            return;
+        }
 
-        data.results.forEach(album => {
-            resultsDiv.innerHTML += `
-                <div id="album-${album.collection_id}">
-                    <h3>${album.album_name}</h3>
-                    <p>${album.artist}</p>
-                    <button onclick="downloadAlbum(${album.collection_id})">
-                        Download
-                    </button>
-                    <span id="status-${album.collection_id}"></span>
-                    <div class="log-box" id="log-${album.collection_id}"></div>
+        resultsDiv.innerHTML = `
+            <div class="results-header">
+                <span class="results-label">Results</span>
+                <span class="results-count">${data.results.length} albums</span>
+            </div>
+        `;
+
+        data.results.forEach((album, i) => {
+            const card = document.createElement('div');
+            card.className = 'album-card';
+            card.id = `album-${album.collection_id}`;
+            card.innerHTML = `
+                <div class="album-card-inner">
+                    <div class="album-index">${String(i + 1).padStart(2, '0')}</div>
+                    <div class="album-info">
+                        <div class="album-name">${album.album_name}</div>
+                        <div class="album-meta">
+                            ${album.artist}
+                            <span class="album-year">${album.year}</span>
+                        </div>
+                    </div>
+                    <div class="album-actions">
+                        <label class="overwrite-toggle" title="Overwrite if already exists at destination">
+                            <input type="checkbox" id="overwrite-${album.collection_id}">
+                            <span class="overwrite-label">overwrite</span>
+                        </label>
+                        <button class="btn btn-move" onclick="moveAlbum('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
+                            Move
+                        </button>
+                        <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
+                            Download
+                        </button>
+                        <span class="status-tag" id="status-${album.collection_id}"></span>
+                    </div>
                 </div>
-                <hr>
+                <div class="log-box" id="log-${album.collection_id}"></div>
             `;
+            resultsDiv.appendChild(card);
         });
     }
 
     async function downloadAlbum(collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
         const logBox = document.getElementById(`log-${collectionId}`);
-        const btn = document.querySelector(`#album-${collectionId} button`);
+        const btn = document.getElementById(`dl-btn-${collectionId}`);
 
-        // Show the log box and lock the button
         btn.disabled = true;
         logBox.style.display = "block";
         logBox.textContent = "";
-        statusEl.textContent = " Downloading...";
+        statusEl.className = "status-tag downloading";
+        statusEl.textContent = "Downloading";
 
         const response = await fetch("http://localhost:8000/albums/download", {
             method: "POST",
@@ -91,7 +502,6 @@
             const { done, value } = await reader.read();
             if (done) break;
 
-            // SSE lines look like "data: some text\n\n" — strip the prefix
             const text = decoder.decode(value);
             const lines = text.split("\n").filter(l => l.startsWith("data: "));
 
@@ -99,21 +509,56 @@
                 const content = line.replace("data: ", "");
 
                 if (content === "[DONE]") {
-                    statusEl.textContent = " ✓ Downloaded";
+                    statusEl.className = "status-tag done";
+                    statusEl.textContent = "✓ Done";
                     btn.disabled = false;
                     return;
                 }
 
                 if (content.startsWith("[ERROR]")) {
-                    statusEl.textContent = ` ✗ ${content}`;
+                    statusEl.className = "status-tag error";
+                    statusEl.textContent = "✗ Error";
+                    logBox.textContent += content + "\n";
                     btn.disabled = false;
                     return;
                 }
 
-                // Append each gamdl output line to the log box
                 logBox.textContent += content + "\n";
-                logBox.scrollTop = logBox.scrollHeight; // auto-scroll to bottom
+                logBox.scrollTop = logBox.scrollHeight;
             }
+        }
+    }
+
+    async function moveAlbum(artist, albumName, collectionId) {
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        const overwrite = document.getElementById(`overwrite-${collectionId}`).checked;
+
+        statusEl.className = "status-tag moving";
+        statusEl.textContent = "Moving...";
+
+        try {
+            const response = await fetch("http://localhost:8000/albums/move-album", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    artist: artist,
+                    album_name: albumName,
+                    overwrite: overwrite
+                })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                statusEl.className = "status-tag moved";
+                statusEl.textContent = "✓ Moved";
+            } else {
+                statusEl.className = "status-tag error";
+                statusEl.textContent = "✗ " + data.detail;
+            }
+        } catch (err) {
+            statusEl.className = "status-tag error";
+            statusEl.textContent = "✗ Failed";
         }
     }
 </script>

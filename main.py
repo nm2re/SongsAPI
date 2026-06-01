@@ -77,7 +77,6 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
 
     async def streamOutput():
         process = subprocess.Popen( # args containing wrapper elements
-            # ["gamdl", "--cookies-path", Link.COOKIES_URL, "--output-path", Link.DOWNLOAD_DIR, url],
             ["gamdl", "--song-codec-priority", "alac", "--use-wrapper", "--wrapper-account-url", Link.WRAPPER_ACCOUNT_URL, "--wrapper-m3u8-ip", Link.WRAPPER_M3U8_IP, "--wrapper-decrypt-ip", Link.WRAPPER_DECRYPT_IP, "--output-path", Link.DOWNLOAD_DIR, url],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
@@ -141,9 +140,13 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
             convert_response = convertToFLAC(ConvertRequest(artist=match['artist'], album_name=match['album_name'])) # passing the request as arguments
 
             if convert_response["status"] == "success":
-                yield "data: [DONE]\n\n"
+                yield "data: [CONVERTED TO FLAC]\n\n"
             else:
                 yield f"data: [CONVERSION FAILED]\n\n"
+
+            moveAlbum(ConvertRequest(artist=match['artist'], album_name=match['album_name']))
+            yield "data: [MOVED to ONEDRIVE]\n\n"
+            yield  "data: [DONE]\n\n"
         else:
             yield f"data: [ERROR] gamdl exited with code {process.returncode}\n\n"
 
@@ -193,6 +196,7 @@ def updateYear(body: MetadataRequest):
 class ConvertRequest(BaseModel): # a structure to help write the functions based on the artist and album name instead of the folder name which can be different based on the gamdl version and settings
     artist: str
     album_name: str
+    overwrite: bool = False # option to overwrite existing flac files, default is false to prevent accidental overwriting
 
 @app.post("/albums/convert-flac")
 def convertToFLAC(body: ConvertRequest): # class folder structure is used here to use artist and album_name
@@ -219,6 +223,35 @@ def convertToFLAC(body: ConvertRequest): # class folder structure is used here t
     else:
         print(stderr, flush=True)
         raise HTTPException(status_code=500, detail=f"Conversion failed: {stderr}")
+
+
+@app.post("/albums/move-album")
+def moveAlbum(body: ConvertRequest):
+    """
+    Move the album from the current directory to OneDrive Repository of Albums
+    """
+
+    source = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
+    destination = Link.DESTINATION_DIR / f"{body.artist} - {body.album_name}"
+
+    if not source.exists():
+        raise HTTPException(status_code=404, detail=f"Album not found at {source}")
+
+
+    if destination.exists():
+        # If an album already exists in One-Drive
+        if body.overwrite:
+            shutil.rmtree(destination)
+        else:
+            raise HTTPException(status_code=409, detail=f"Album already exists at {destination}")
+    try:
+        shutil.move(source, Link.DESTINATION_DIR)
+        return {"status" : "success", "message": f"Moved to {Link.DESTINATION_DIR}"}
+
+    except Exception as e:
+        raise HTTPException(status_code=505, detail=str(e))
+
+
 
 
 
