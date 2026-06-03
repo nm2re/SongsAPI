@@ -4,7 +4,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 import requests
 from mutagen.flac import FLAC
@@ -12,32 +12,193 @@ from mutagen.mp4 import MP4
 from starlette.middleware.cors import CORSMiddleware
 import subprocess
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
+from fastapi.responses import RedirectResponse
 from starlette.responses import StreamingResponse
-from Secrets import Link
+from Secrets import Link, Token
 import os
 
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])  # Replace Allow origins with proper url later when deploying
-
+app.add_middleware(SessionMiddleware, secret_key=Token.SECRET_KEY)
 Link.setup() # setup .mkdir() function
 
 @app.get("/")
-def home():
+async def index(request: Request):
     """
     This is where the website search index will be, for now it just serves the index.html
     file which will be used for testing the frontend and backend connection.
     """
+
+    if "user" not in request.session:
+        return RedirectResponse(url="/login", status_code=302)
     return FileResponse("templates/index.html")
+
+
+USERS = {
+    Token.USERNAME : Token.PASSWORD,
+    Token.ADMIN_USERNAME : Token.ADMIN_PASSWORD
+}
+
+# -------------------- ADMIN DASHBOARD + LOGIN --------------------
+
+def is_admin(request: Request):
+    """
+    Checking if user is admin
+    :param request:
+    :return:
+    """
+    return request.session.get("user") == "admin"
+
+
+
+@app.get('/admin')
+async def admin_page(request: Request):
+    """
+    Admin Page viewable only by the admin
+    """
+    if not is_admin(request):
+        RedirectResponse(url="/login", status_code=302)
+    return FileResponse("templates/admin.html")
+
+
+@app.get('/api/users')
+async def list_users(request: Request):
+    """
+    List all the users in the system allowed to use SongsAPI, only accessible by admin
+    """
+    if not is_admin(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return { "Users" : list(USERS.keys())}
+
+
+
+@app.post('/api/create-user')
+async def create_user(request: Request):
+    """
+    Create User Account for SongsAPI
+    """
+
+    if not is_admin(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+    data = await request.json()
+
+    username = data.get("username", "").strip() # if value does not exist return blank
+    password = data.get("password", "").strip()
+
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and Password Required")
+
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters long")
+
+    if username in USERS:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    if username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot create user with reserved username 'admin'")
+
+    USERS[username] = password
+    return { 'status': "success", "message": f"User '{username}' created successfully" }
+
+
+
+@app.post('/api/delete-user')
+async def delete_user(request: Request, username: str):
+    """
+    Delete a user from SongsAPI, only accessible by admin
+    """
+    if not is_admin(request):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    data = await request.json()
+    username = data.get("username")
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Username required")
+    if username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete admin user")
+    if username not in USERS:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    del USERS[username]
+    return {"status": "success"}
+
+
+
+@app.post('/api/change-password')
+async def change_password(request: Request):
+    """
+    Change passwords of existing users
+    :param request:
+    :return:
+    """
+
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    data = await request.json()
+    old_password = data.get("old_password", "").strip()
+    new_password = data.get("new_password", "").strip()
+
+    if not old_password or not new_password:
+        raise HTTPException(status_code=400, detail="Both passwords required")
+
+    if old_password == new_password:
+        raise HTTPException(status_code=400, detail="New password cannot be same as old password")
+
+    if USERS[user] != old_password:
+        raise HTTPException(status_code=400, detail="Incorrect Password")
+
+    USERS[user] = new_password
+
+
 
 
 
 @app.get('/login')
-def login():
+async def login_page():
     """
-    Authorization Page for SongsAPI
+    Serves the login page
     """
+    return FileResponse("templates/login.html")
+
+
+@app.post('/api/login')
+async def login(request: Request):
+    """
+    Handling login functionality
+    :return:
+    """
+
+    data = await request.json()
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        raise HTTPException(status_code=404, detail="Missing login credentials")
+
+    if not username in USERS or USERS[username] != password:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    request.session["user"] = username
+    return {"status" : "success"}
+
+
+@app.get('/api/logout')
+async def logout(request: Request):
+    """
+    Handling logout functionality
+    """
+    request.session.pop("user", None)
+    return {"status" : "success"}
+
 
 
 

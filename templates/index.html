@@ -515,6 +515,19 @@
     <div class="status-bar">
         <span class="dot"></span>API READY — localhost:8000
     </div>
+
+    <div class="header-actions">
+        <button onclick="window.location.href='/admin'" style="border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+                onmouseover="this.style.borderColor='var(--accent)'; this.style.color='var(--accent)'"
+                onmouseout="this.style.borderColor='#555'; this.style.color='#888'">
+            ADMIN
+        </button>
+        <button onclick="logout()" style="border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+                onmouseover="this.style.borderColor='var(--accent)'; this.style.color='var(--accent)'"
+                onmouseout="this.style.borderColor='#555'; this.style.color='#888'">
+            LOGOUT
+        </button>
+    </div>
 </header>
 
 <main>
@@ -858,6 +871,11 @@
             renameTarget = null;
         }
     });
+
+    async function logout() {
+        await fetch("http://localhost:8000/api/logout", { method: "POST" });
+        window.location.href = "/login";
+    }
 </script>
 
 </body>

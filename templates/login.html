@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Re;vault — Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #080808;
+            --surface: #111111;
+            --border: #1e1e1e;
+            --border-bright: #2e2e2e;
+            --text: #e8e8e8;
+            --muted: #555;
+            --accent: #c8ff00;
+            --accent-dim: #8aad00;
+            --red: #ff4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0.4;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 360px;
+            border: 1px solid var(--border-bright);
+            background: var(--surface);
+            padding: 40px;
+        }
+
+        .logo {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.8rem;
+            letter-spacing: 0.15em;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+
+        .logo-sub {
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-bottom: 32px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            font-size: 10px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        input {
+            width: 100%;
+            background: transparent;
+            border: 1px solid var(--border-bright);
+            color: var(--text);
+            padding: 12px 14px;
+            font-family: 'DM Mono', monospace;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+        }
+
+        input::placeholder {
+            color: var(--muted);
+        }
+
+        .btn-submit {
+            width: 100%;
+            background: var(--accent);
+            border: none;
+            color: #000;
+            padding: 12px;
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1rem;
+            letter-spacing: 0.15em;
+            cursor: pointer;
+            margin-top: 24px;
+            transition: background 0.15s;
+        }
+
+        .btn-submit:hover {
+            background: #d9ff1a;
+        }
+
+        .btn-submit:active {
+            background: var(--accent-dim);
+        }
+
+        .btn-submit:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .error {
+            font-size: 12px;
+            color: var(--red);
+            margin-top: 8px;
+            letter-spacing: 0.05em;
+        }
+
+        .loading {
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-container">
+    <div class="logo">RE;VAULT</div>
+    <div class="logo-sub">Apple Music Downloader</div>
+
+    <form id="loginForm">
+        <div class="form-group">
+            <label class="form-label">Username</label>
+            <input
+                    type="text"
+                    id="username"
+                    placeholder="Enter username"
+                    autocomplete="username"
+                    required
+            >
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Password</label>
+            <input
+                    type="password"
+                    id="password"
+                    placeholder="Enter password"
+                    autocomplete="current-password"
+                    required
+            >
+        </div>
+
+        <div id="error" class="error"></div>
+
+        <button type="submit" class="btn-submit" id="submitBtn">Login</button>
+        <div id="loading" class="loading" style="display:none; margin-top: 16px;">Authenticating...</div>
+    </form>
+</div>
+
+<script>
+    document.getElementById("loginForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+        const errorEl = document.getElementById("error");
+        const submitBtn = document.getElementById("submitBtn");
+        const loadingEl = document.getElementById("loading");
+
+        errorEl.textContent = "";
+        submitBtn.disabled = true;
+        loadingEl.style.display = "block";
+
+        try {
+            const response = await fetch("http://localhost:8000/api/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                window.location.href = "/";
+            } else {
+                errorEl.textContent = data.detail || "Login failed";
+                submitBtn.disabled = false;
+                loadingEl.style.display = "none";
+            }
+        } catch (err) {
+            errorEl.textContent = "Connection error";
+            submitBtn.disabled = false;
+            loadingEl.style.display = "none";
+        }
+    });
+
+    // Enter key submits
+    document.getElementById("password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            document.getElementById("loginForm").dispatchEvent(new Event("submit"));
+        }
+    });
+</script>
+
+</body>
+</html>

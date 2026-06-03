@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Re;vault — Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #080808;
+            --surface: #111111;
+            --border: #1e1e1e;
+            --border-bright: #2e2e2e;
+            --text: #e8e8e8;
+            --muted: #555;
+            --accent: #c8ff00;
+            --accent-dim: #8aad00;
+            --red: #ff4444;
+            --green: #00ff88;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            min-height: 100vh;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0.4;
+        }
+
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 24px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.6rem;
+            letter-spacing: 0.15em;
+            color: var(--accent);
+        }
+
+        .logo span {
+            color: var(--muted);
+            font-size: 0.7rem;
+            font-family: 'DM Mono', monospace;
+            letter-spacing: 0.2em;
+            display: block;
+            margin-top: -4px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .btn-nav {
+            border: 1px solid #555;
+            background: transparent;
+            color: #888;
+            padding: 6px 14px;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            cursor: pointer;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            transition: all 0.15s;
+        }
+
+        .btn-nav:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 48px 40px;
+        }
+
+        .panel {
+            border: 1px solid var(--border-bright);
+            background: var(--surface);
+            padding: 32px;
+            margin-bottom: 32px;
+        }
+
+        .panel-title {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.2rem;
+            letter-spacing: 0.15em;
+            margin-bottom: 24px;
+            color: var(--accent);
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            font-size: 10px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        input {
+            width: 100%;
+            background: transparent;
+            border: 1px solid var(--border-bright);
+            color: var(--text);
+            padding: 10px 12px;
+            font-family: 'DM Mono', monospace;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus { border-color: var(--accent); }
+        input::placeholder { color: var(--muted); }
+
+        .btn {
+            border: 1px solid var(--border-bright);
+            background: transparent;
+            color: var(--muted);
+            padding: 8px 16px;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-transform: uppercase;
+        }
+
+        .btn:hover { border-color: var(--accent); color: var(--accent); }
+        .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+            border-color: var(--accent);
+            margin-top: 16px;
+        }
+
+        .btn-primary:hover { background: #d9ff1a; }
+
+        .btn-danger {
+            background: transparent;
+            color: var(--red);
+            border-color: #440000;
+        }
+
+        .btn-danger:hover { border-color: var(--red); }
+
+        .message {
+            font-size: 12px;
+            padding: 12px;
+            margin-top: 12px;
+            border: 1px solid transparent;
+            letter-spacing: 0.05em;
+        }
+
+        .message.success {
+            color: var(--green);
+            border-color: #004422;
+        }
+
+        .message.error {
+            color: var(--red);
+            border-color: #440000;
+        }
+
+        .users-list {
+            margin-top: 24px;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            border: 1px solid var(--border);
+            margin-bottom: 8px;
+            background: #0a0a0a;
+        }
+
+        .user-info {
+            flex: 1;
+        }
+
+        .user-name {
+            font-weight: 500;
+            color: var(--text);
+        }
+
+        .user-badge {
+            font-size: 9px;
+            color: var(--accent);
+            margin-left: 8px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        @media (max-width: 600px) {
+            .form-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">
+        RE;VAULT
+        <span>Admin Panel</span>
+    </div>
+    <div class="header-actions">
+        <a href="/"><button class="btn-nav">← Back</button></a>
+        <button class="btn-nav" onclick="logout()">Logout</button>
+    </div>
+</header>
+
+<main>
+    <!-- Create User Panel -->
+    <div class="panel">
+        <div class="panel-title">Create User</div>
+        <form id="createUserForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" id="newUsername" placeholder="New username" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="newPassword" placeholder="Temporary password" required>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Create User</button>
+            <div id="createMessage"></div>
+        </form>
+    </div>
+
+    <!-- Users List -->
+    <div class="panel">
+        <div class="panel-title">Manage Users</div>
+        <div class="users-list" id="usersList"></div>
+    </div>
+
+    <!-- Change Password Panel -->
+    <div class="panel">
+        <div class="panel-title">Change Admin Password</div>
+        <form id="changePasswordForm">
+            <div class="form-group">
+                <label class="form-label">Current Password</label>
+                <input type="password" id="oldPassword" placeholder="Current password" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">New Password</label>
+                <input type="password" id="newAdminPassword" placeholder="New password" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Change Password</button>
+            <div id="changeMessage"></div>
+        </form>
+    </div>
+</main>
+
+<script>
+    async function loadUsers() {
+        try {
+            const response = await fetch("http://localhost:8000/api/users");
+            const data = await response.json();
+            const list = document.getElementById("usersList");
+
+            if (data.users.length === 0) {
+                list.innerHTML = "<p style='color: var(--muted); font-size: 12px;'>No users yet</p>";
+                return;
+            }
+
+            list.innerHTML = data.users.map(user => `
+                <div class="user-item">
+                    <div class="user-info">
+                        <span class="user-name">${user}</span>
+                        ${user === "admin" ? '<span class="user-badge">ADMIN</span>' : ''}
+                    </div>
+                    ${user !== "admin" ? `
+                        <button class="btn btn-danger" onclick="deleteUser('${user}')">Delete</button>
+                    ` : ''}
+                </div>
+            `).join("");
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    async function deleteUser(username) {
+        if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+
+        try {
+            const response = await fetch("http://localhost:8000/api/users/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username })
+            });
+
+            if (response.ok) {
+                loadUsers();
+            } else {
+                alert("Failed to delete user");
+            }
+        } catch (err) {
+            alert("Error: " + err);
+        }
+    }
+
+    document.getElementById("createUserForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = document.getElementById("newUsername").value;
+        const password = document.getElementById("newPassword").value;
+        const msgEl = document.getElementById("createMessage");
+
+        try {
+            const response = await fetch("http://localhost:8000/api/users/create", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                msgEl.innerHTML = `<div class="message success">✓ User "${username}" created successfully</div>`;
+                document.getElementById("createUserForm").reset();
+                loadUsers();
+                setTimeout(() => msgEl.innerHTML = "", 3000);
+            } else {
+                msgEl.innerHTML = `<div class="message error">✗ ${data.detail}</div>`;
+            }
+        } catch (err) {
+            msgEl.innerHTML = `<div class="message error">✗ Error: ${err}</div>`;
+        }
+    });
+
+    document.getElementById("changePasswordForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const oldPassword = document.getElementById("oldPassword").value;
+        const newPassword = document.getElementById("newAdminPassword").value;
+        const msgEl = document.getElementById("changeMessage");
+
+        try {
+            const response = await fetch("http://localhost:8000/api/users/change-password", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                msgEl.innerHTML = `<div class="message success">✓ Password changed successfully</div>`;
+                document.getElementById("changePasswordForm").reset();
+                setTimeout(() => msgEl.innerHTML = "", 3000);
+            } else {
+                msgEl.innerHTML = `<div class="message error">✗ ${data.detail}</div>`;
+            }
+        } catch (err) {
+            msgEl.innerHTML = `<div class="message error">✗ Error: ${err}</div>`;
+        }
+    });
+
+    async function logout() {
+        await fetch("http://localhost:8000/api/logout", { method: "POST" });
+        window.location.href = "/login";
+    }
+
+    loadUsers();
+</script>
+
+</body>
+</html>
