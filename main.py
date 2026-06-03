@@ -1,3 +1,4 @@
+import asyncio
 import queue
 import shutil
 import threading
@@ -28,23 +29,28 @@ class DownloadRequest(BaseModel):
 @app.get("/")
 def home():
     """
-    This is where the website search index will be, for now it just serves the index.html file which will be used for testing the frontend and backend connection.
+    This is where the website search index will be, for now it just serves the index.html
+    file which will be used for testing the frontend and backend connection.
     """
-    return FileResponse("index.html")
+    return FileResponse("templates/index.html")
+
 
 
 @app.get("/albums/search")
-def searchAlbum(q: str, limit: int = 20):
+def searchAlbum(q: str, limit: int = 50):
     """
     Used to search for albums using the iTunes Search API.
-    Returns a list of albums with their collection id, name, artist and apple music url which will be used for downloading the album later.
+    Returns a list of albums with their collection id, name, artist and apple music url
+    which will be used for downloading the album later.
     """
 
-    response = requests.get(Link.ITUNES_URL, params={"term": q, "entity": "album", "limit": limit})
+    response = requests.get(Link.ITUNES_URL, params={"term": q, "entity": "album", "media": "music","limit": limit})
     results = response.json()["results"]
 
     albums = []
     for i, album in enumerate(results):
+        if album.get("collectionType") != "Album":
+            continue  # Skip non-album results
         albums.append(
             {
                 "index": i,  # index added to pick which album to download
@@ -63,7 +69,6 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
     """
     Selected albums will be downloaded using gamdl which is a command line tool that can download albums from Apple Music.
     """
-
     match = None
     for album in body.results:
         if album["collection_id"] == body.collection_id:
@@ -77,7 +82,7 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
 
     async def streamOutput():
         process = subprocess.Popen( # args containing wrapper elements
-            ["gamdl", "--song-codec-priority", "alac", "--use-wrapper", "--wrapper-account-url", Link.WRAPPER_ACCOUNT_URL, "--wrapper-m3u8-ip", Link.WRAPPER_M3U8_IP, "--wrapper-decrypt-ip", Link.WRAPPER_DECRYPT_IP, "--output-path", Link.DOWNLOAD_DIR, url],
+            ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper", "--wrapper-account-url", Link.WRAPPER_ACCOUNT_URL, "--wrapper-m3u8-ip", Link.WRAPPER_M3U8_IP, "--wrapper-decrypt-ip", Link.WRAPPER_DECRYPT_IP, "--output-path", Link.DOWNLOAD_DIR, url],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
             text=True,
@@ -87,9 +92,6 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
 
         q = queue.Queue()
         def enqueue(stream, label):
-            # for line in stream:
-            #     q.put((label, line.rstrip()))
-            # q.put((label, None))  # i think this queue tells the other queue its done
             for line in stream:
                 stripped = line.rstrip()
                 if not stripped.startswith("[download]"):
@@ -115,46 +117,17 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         t2.join()
         process.wait()
 
-        def renameFolder(artist, album):
-            artist_dir = Link.DOWNLOAD_DIR / artist
-            old_album = artist_dir / album
-            new_name = Link.DOWNLOAD_DIR / f"{artist} - {album}"
-
-            if old_album.exists():
-                shutil.move(str(old_album), str(new_name))
-                print(f"[rename] {old_album} -> {new_name}", flush=True)
-
-            # removing of the old artist folder
-            if not any(artist_dir.iterdir()):
-                artist_dir.rmdir()
-
-        renameFolder(match["artist"], match["album_name"]) # renaming the folder to "artist - album name" instead of "artist/album name"
         print(f"[gamdl exited with code {process.returncode}]\n\n")
 
         if process.returncode == 0:
-            folder = Link.DOWNLOAD_DIR / f"{match['artist']} - {match['album_name']}"
-            update_year(str(folder), match["year"])
 
-            # Convert the album to FLAC
-            yield "data: [Converting to FLAC...]\n\n"
-            convert_response = convertToFLAC(ConvertRequest(artist=match['artist'], album_name=match['album_name'])) # passing the request as arguments
-
-            if convert_response["status"] == "success":
-                yield "data: [CONVERTED TO FLAC]\n\n"
-            else:
-                yield f"data: [CONVERSION FAILED]\n\n"
-
-            moveAlbum(ConvertRequest(artist=match['artist'], album_name=match['album_name']))
-            yield "data: [MOVED to ONEDRIVE]\n\n"
-            yield  "data: [DONE]\n\n"
+            folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
+            update_year(folder, match["year"])
+            yield "data: [METADATA] Year Updated!\n\n"
+            yield "data: [DONE]\n\n"
         else:
             yield f"data: [ERROR] gamdl exited with code {process.returncode}\n\n"
-
-    return StreamingResponse(
-        streamOutput(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    )
+    return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}) # headers to prevent buffering on nginx if used as a reverse proxy, also cache control to prevent caching of the stream
 
 class MetadataRequest(BaseModel):
     folder: str
@@ -198,31 +171,63 @@ class ConvertRequest(BaseModel): # a structure to help write the functions based
     album_name: str
     overwrite: bool = False # option to overwrite existing flac files, default is false to prevent accidental overwriting
 
+
+
 @app.post("/albums/convert-flac")
-def convertToFLAC(body: ConvertRequest): # class folder structure is used here to use artist and album_name
+async def convertToFLAC(body: ConvertRequest):
     """
-    This function runs a powershell command script to convert the folder containing the .m4a files into .flac
-    :return:
+    Converts all .m4a files in the album folder to .flac using ffmpeg via PowerShell script.
+    Streams progress back to the client as SSE.
     """
 
     folder = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
     script_path = Link.DOWNLOAD_DIR / Link.CONVERT_TO_FLAC
-    result = subprocess.Popen(
-        ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path, "-FolderPath", folder],  # powershell command to convert m4a to flac using ffmpeg
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=0
+
+    async def streamOutput():
+        loop = asyncio.get_event_loop()
+        q = asyncio.Queue()
+
+        def enqueue(stream):
+            for line in stream:
+                loop.call_soon_threadsafe(q.put_nowait, line.rstrip())
+            loop.call_soon_threadsafe(q.put_nowait, None)
+
+        process = subprocess.Popen(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-FolderPath", str(folder)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=0
+        )
+
+        t1 = threading.Thread(target=enqueue, args=(process.stdout,))
+        t2 = threading.Thread(target=enqueue, args=(process.stderr,))
+        t1.start()
+        t2.start()
+
+        finished = 0
+        while finished < 2:
+            line = await q.get()
+            if line is None:
+                finished += 1
+                continue
+            print(f"[convert] {line}", flush=True)
+            yield f"data: {line}\n\n"
+
+        t1.join()
+        t2.join()
+        process.wait()
+
+        if process.returncode != 0:
+            yield f"data: [ERROR] Conversion failed with code {process.returncode}\n\n"
+        else:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        streamOutput(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
-
-    stdout, stderr = result.communicate()
-
-    if result.returncode == 0:
-        print(stdout, flush=True)
-        return {"status": "success", "message": stdout}
-    else:
-        print(stderr, flush=True)
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {stderr}")
 
 
 @app.post("/albums/move-album")
@@ -237,7 +242,6 @@ def moveAlbum(body: ConvertRequest):
     if not source.exists():
         raise HTTPException(status_code=404, detail=f"Album not found at {source}")
 
-
     if destination.exists():
         # If an album already exists in One-Drive
         if body.overwrite:
@@ -251,8 +255,26 @@ def moveAlbum(body: ConvertRequest):
     except Exception as e:
         raise HTTPException(status_code=505, detail=str(e))
 
+@app.post('/albums/rename-folder')
+def renameFolder(body: ConvertRequest):
+    artist_dir = Link.DOWNLOAD_DIR / body.artist
+    old_album_location = artist_dir / body.album_name
+    new_album_name = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
 
+    print(f"[RENAME] Looking for: {old_album_location}", flush=True)
+    print(f"[RENAME] Exists: {old_album_location.exists()}", flush=True)
+    print(f"[RENAME] artist_dir contents: {list(artist_dir.iterdir()) if artist_dir.exists() else 'DIR NOT FOUND'}",
+          flush=True)
 
+    if not old_album_location.exists():
+        raise HTTPException(status_code=404, detail=f"Album folder not found at {old_album_location}")
 
+    shutil.move(old_album_location,new_album_name)
+    print(f"[RENAME] {old_album_location} -> {new_album_name}", flush=True)
 
+    if artist_dir.exists() and artist_dir.is_dir():
+        if not any(artist_dir.iterdir()):
+            artist_dir.rmdir()
+
+    return {"status": "success", "message": f"Renamed to {new_album_name}"}
 

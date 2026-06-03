@@ -16,6 +16,8 @@
             --accent-dim: #8aad00;
             --red: #ff4444;
             --green: #00ff88;
+            --blue: #00aaff;
+            --orange: #ff8800;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -29,7 +31,6 @@
             overflow-x: hidden;
         }
 
-        /* Grain overlay */
         body::before {
             content: '';
             position: fixed;
@@ -87,14 +88,12 @@
         }
 
         main {
-            max-width: 900px;
+            max-width: 1080px;
             margin: 0 auto;
             padding: 48px 40px;
         }
 
-        .search-section {
-            margin-bottom: 48px;
-        }
+        .search-section { margin-bottom: 48px; }
 
         .search-label {
             font-size: 10px;
@@ -112,9 +111,7 @@
             transition: border-color 0.2s;
         }
 
-        .search-row:focus-within {
-            border-color: var(--accent);
-        }
+        .search-row:focus-within { border-color: var(--accent); }
 
         .search-row input {
             flex: 1;
@@ -189,7 +186,7 @@
             padding: 16px 20px;
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 16px;
         }
 
         .album-index {
@@ -230,15 +227,17 @@
         .album-actions {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             flex-shrink: 0;
+            flex-wrap: wrap;
+            justify-content: flex-end;
         }
 
         .btn {
             border: 1px solid var(--border-bright);
             background: transparent;
             color: var(--muted);
-            padding: 7px 16px;
+            padding: 7px 14px;
             font-family: 'DM Mono', monospace;
             font-size: 11px;
             letter-spacing: 0.1em;
@@ -259,13 +258,19 @@
             color: var(--muted);
         }
 
-        .btn-move {
-            border-color: #2a2a2a;
-        }
-
         .btn-move:hover {
             border-color: #888;
             color: var(--text);
+        }
+
+        .btn-convert:hover {
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .btn-rename:hover {
+            border-color: var(--orange);
+            color: var(--orange);
         }
 
         .overwrite-toggle {
@@ -320,13 +325,18 @@
             text-transform: uppercase;
             padding: 4px 10px;
             border: 1px solid transparent;
+            white-space: nowrap;
         }
 
         .status-tag.downloading { color: var(--accent); border-color: var(--accent-dim); }
-        .status-tag.done { color: var(--green); border-color: #004422; }
-        .status-tag.error { color: var(--red); border-color: #440000; }
-        .status-tag.moving { color: #888; border-color: #333; }
-        .status-tag.moved { color: var(--text); border-color: #333; }
+        .status-tag.done        { color: var(--green);  border-color: #004422; }
+        .status-tag.error       { color: var(--red);    border-color: #440000; }
+        .status-tag.moving      { color: #888;          border-color: #333; }
+        .status-tag.moved       { color: var(--text);   border-color: #333; }
+        .status-tag.converting  { color: var(--blue);   border-color: #003355; }
+        .status-tag.converted   { color: var(--blue);   border-color: #003355; }
+        .status-tag.renaming    { color: var(--orange);  border-color: #442200; }
+        .status-tag.renamed     { color: var(--orange);  border-color: #442200; }
 
         .log-box {
             border-top: 1px solid var(--border);
@@ -347,16 +357,133 @@
         .log-box::-webkit-scrollbar-track { background: transparent; }
         .log-box::-webkit-scrollbar-thumb { background: var(--border-bright); }
 
+        /* Rename modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.15s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border-bright);
+            padding: 32px;
+            width: 480px;
+            max-width: 90vw;
+            animation: slideUp 0.2s ease;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .modal-title {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.4rem;
+            letter-spacing: 0.15em;
+            color: var(--orange);
+            margin-bottom: 4px;
+        }
+
+        .modal-subtitle {
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 24px;
+        }
+
+        .modal-field {
+            margin-bottom: 16px;
+        }
+
+        .modal-field label {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .modal-field input {
+            width: 100%;
+            background: #0a0a0a;
+            border: 1px solid var(--border-bright);
+            color: var(--text);
+            padding: 10px 14px;
+            font-family: 'DM Mono', monospace;
+            font-size: 13px;
+            outline: none;
+            letter-spacing: 0.03em;
+            transition: border-color 0.15s;
+        }
+
+        .modal-field input:focus {
+            border-color: var(--orange);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 24px;
+            justify-content: flex-end;
+        }
+
+        .btn-modal-cancel {
+            border: 1px solid var(--border-bright);
+            background: transparent;
+            color: var(--muted);
+            padding: 9px 20px;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.15s;
+        }
+
+        .btn-modal-cancel:hover {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        .btn-modal-confirm {
+            border: none;
+            background: var(--orange);
+            color: #000;
+            padding: 9px 24px;
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1rem;
+            letter-spacing: 0.15em;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .btn-modal-confirm:hover { background: #ffaa33; }
+        .btn-modal-confirm:active { background: #cc6600; }
+
         /* staggered animation delays */
-        .album-card:nth-child(1) { animation-delay: 0ms; }
-        .album-card:nth-child(2) { animation-delay: 40ms; }
-        .album-card:nth-child(3) { animation-delay: 80ms; }
-        .album-card:nth-child(4) { animation-delay: 120ms; }
-        .album-card:nth-child(5) { animation-delay: 160ms; }
-        .album-card:nth-child(6) { animation-delay: 200ms; }
-        .album-card:nth-child(7) { animation-delay: 240ms; }
-        .album-card:nth-child(8) { animation-delay: 280ms; }
-        .album-card:nth-child(9) { animation-delay: 320ms; }
+        .album-card:nth-child(1)  { animation-delay: 0ms; }
+        .album-card:nth-child(2)  { animation-delay: 40ms; }
+        .album-card:nth-child(3)  { animation-delay: 80ms; }
+        .album-card:nth-child(4)  { animation-delay: 120ms; }
+        .album-card:nth-child(5)  { animation-delay: 160ms; }
+        .album-card:nth-child(6)  { animation-delay: 200ms; }
+        .album-card:nth-child(7)  { animation-delay: 240ms; }
+        .album-card:nth-child(8)  { animation-delay: 280ms; }
+        .album-card:nth-child(9)  { animation-delay: 320ms; }
         .album-card:nth-child(10) { animation-delay: 360ms; }
 
         .empty-state {
@@ -412,8 +539,29 @@
     </div>
 </main>
 
+<!-- Rename Modal -->
+<div class="modal-overlay" id="renameModal" style="display:none;" onclick="closeRenameModal(event)">
+    <div class="modal">
+        <div class="modal-title">Rename Album</div>
+        <div class="modal-subtitle">Update folder name and metadata</div>
+        <div class="modal-field">
+            <label>Artist</label>
+            <input type="text" id="renameArtist" placeholder="Artist name">
+        </div>
+        <div class="modal-field">
+            <label>Album Name</label>
+            <input type="text" id="renameAlbum" placeholder="Album name">
+        </div>
+        <div class="modal-actions">
+            <button class="btn-modal-cancel" onclick="closeRenameModal()">Cancel</button>
+            <button class="btn-modal-confirm" onclick="confirmRename()">Rename</button>
+        </div>
+    </div>
+</div>
+
 <script>
     let currentResults = [];
+    let renameTarget = null; // { collectionId, originalArtist, originalAlbum }
 
     async function searchAlbums() {
         const query = document.getElementById("searchInput").value.trim();
@@ -423,7 +571,7 @@
         resultsDiv.innerHTML = `<div class="empty-state"><span class="big">...</span>Searching</div>`;
 
         const response = await fetch(
-            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}&limit=10`
+            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}`
         );
 
         const data = await response.json();
@@ -460,6 +608,12 @@
                             <input type="checkbox" id="overwrite-${album.collection_id}">
                             <span class="overwrite-label">overwrite</span>
                         </label>
+                        <button class="btn btn-rename" onclick="openRenameModal('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
+                            Rename
+                        </button>
+                        <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
+                            → FLAC
+                        </button>
                         <button class="btn btn-move" onclick="moveAlbum('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
                             Move
                         </button>
@@ -477,8 +631,8 @@
 
     async function downloadAlbum(collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
-        const logBox = document.getElementById(`log-${collectionId}`);
-        const btn = document.getElementById(`dl-btn-${collectionId}`);
+        const logBox   = document.getElementById(`log-${collectionId}`);
+        const btn      = document.getElementById(`dl-btn-${collectionId}`);
 
         btn.disabled = true;
         logBox.style.display = "block";
@@ -489,20 +643,17 @@
         const response = await fetch("http://localhost:8000/albums/download", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                collection_id: collectionId,
-                results: currentResults
-            })
+            body: JSON.stringify({ collection_id: collectionId, results: currentResults })
         });
 
-        const reader = response.body.getReader();
+        const reader  = response.body.getReader();
         const decoder = new TextDecoder();
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const text = decoder.decode(value);
+            const text  = decoder.decode(value);
             const lines = text.split("\n").filter(l => l.startsWith("data: "));
 
             for (const line of lines) {
@@ -529,6 +680,64 @@
         }
     }
 
+    async function convertAlbum(artist, albumName, collectionId) {
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox   = document.getElementById(`log-${collectionId}`);
+        const btn      = document.getElementById(`conv-btn-${collectionId}`);
+
+        btn.disabled = true;
+        logBox.style.display = "block";
+        logBox.textContent = "";
+        statusEl.className = "status-tag converting";
+        statusEl.textContent = "Converting";
+
+        try {
+            const response = await fetch("http://localhost:8000/albums/convert-flac", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ artist, album_name: albumName })
+            });
+
+            const reader  = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const text  = decoder.decode(value);
+                const lines = text.split("\n").filter(l => l.startsWith("data: "));
+
+                for (const line of lines) {
+                    const content = line.replace("data: ", "");
+
+                    if (content === "[DONE]") {
+                        statusEl.className = "status-tag converted";
+                        statusEl.textContent = "✓ FLAC";
+                        btn.disabled = false;
+                        return;
+                    }
+
+                    if (content.startsWith("[ERROR]")) {
+                        statusEl.className = "status-tag error";
+                        statusEl.textContent = "✗ Error";
+                        logBox.textContent += content + "\n";
+                        btn.disabled = false;
+                        return;
+                    }
+
+                    logBox.textContent += content + "\n";
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
+            }
+        } catch (err) {
+            statusEl.className = "status-tag error";
+            statusEl.textContent = "✗ Failed";
+            logBox.textContent += `[ERROR] ${err.message}\n`;
+            btn.disabled = false;
+        }
+    }
+
     async function moveAlbum(artist, albumName, collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
         const overwrite = document.getElementById(`overwrite-${collectionId}`).checked;
@@ -540,11 +749,7 @@
             const response = await fetch("http://localhost:8000/albums/move-album", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    artist: artist,
-                    album_name: albumName,
-                    overwrite: overwrite
-                })
+                body: JSON.stringify({ artist, album_name: albumName, overwrite })
             });
 
             const data = await response.json();
@@ -561,6 +766,98 @@
             statusEl.textContent = "✗ Failed";
         }
     }
+
+    // ── Rename modal ──────────────────────────────────────────────────────────
+
+    function openRenameModal(artist, albumName, collectionId) {
+        renameTarget = { collectionId, originalArtist: artist, originalAlbum: albumName };
+        document.getElementById("renameArtist").value = artist;
+        document.getElementById("renameAlbum").value  = albumName;
+        document.getElementById("renameModal").style.display = "flex";
+        document.getElementById("renameAlbum").focus();
+    }
+
+    function closeRenameModal(event) {
+        // Close only if clicking the overlay background directly, or via cancel button
+        if (event && event.target !== document.getElementById("renameModal")) return;
+        document.getElementById("renameModal").style.display = "none";
+        renameTarget = null;
+    }
+
+    async function confirmRename() {
+        if (!renameTarget) return;
+
+        const newArtist = document.getElementById("renameArtist").value.trim();
+        const newAlbum  = document.getElementById("renameAlbum").value.trim();
+        if (!newArtist || !newAlbum) return;
+
+        const { collectionId } = renameTarget;
+        const statusEl = document.getElementById(`status-${collectionId}`);
+
+        document.getElementById("renameModal").style.display = "none";
+
+        statusEl.className = "status-tag renaming";
+        statusEl.textContent = "Renaming...";
+
+        try {
+            const response = await fetch("http://localhost:8000/albums/rename-folder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    artist: renameTarget.originalArtist,
+                    album_name: renameTarget.originalAlbum,
+                    new_artist: newArtist,
+                    new_album_name: newAlbum
+                })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                statusEl.className = "status-tag renamed";
+                statusEl.textContent = "✓ Renamed";
+
+                // Update the card's displayed name and meta live
+                const card = document.getElementById(`album-${collectionId}`);
+                if (card) {
+                    card.querySelector(".album-name").textContent = newAlbum;
+                    const metaEl = card.querySelector(".album-meta");
+                    const yearEl = metaEl.querySelector(".album-year");
+                    metaEl.childNodes[0].textContent = newArtist + " ";
+                    // Patch inline onclick references for move/convert/rename
+                    const escaped = (s) => s.replace(/'/g, "\\'");
+                    card.querySelector(".btn-rename").setAttribute(
+                        "onclick",
+                        `openRenameModal('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`
+                    );
+                    card.querySelector(".btn-convert").setAttribute(
+                        "onclick",
+                        `convertAlbum('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`
+                    );
+                    card.querySelector(".btn-move").setAttribute(
+                        "onclick",
+                        `moveAlbum('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`
+                    );
+                }
+            } else {
+                statusEl.className = "status-tag error";
+                statusEl.textContent = "✗ " + (data.detail || "Error");
+            }
+        } catch (err) {
+            statusEl.className = "status-tag error";
+            statusEl.textContent = "✗ Failed";
+        }
+
+        renameTarget = null;
+    }
+
+    // Close modal on Escape
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            document.getElementById("renameModal").style.display = "none";
+            renameTarget = null;
+        }
+    });
 </script>
 
 </body>
