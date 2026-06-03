@@ -2,6 +2,7 @@ import asyncio
 import queue
 import shutil
 import threading
+import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -22,10 +23,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
 
 Link.setup() # setup .mkdir() function
 
-class DownloadRequest(BaseModel):
-    collection_id: int
-    results: list[dict]  # Full list of search results to pick the album from
-
 @app.get("/")
 def home():
     """
@@ -33,6 +30,14 @@ def home():
     file which will be used for testing the frontend and backend connection.
     """
     return FileResponse("templates/index.html")
+
+
+
+@app.get('/login')
+def login():
+    """
+    Authorization Page for SongsAPI
+    """
 
 
 
@@ -63,6 +68,11 @@ def searchAlbum(q: str, limit: int = 50):
         )
     return {"results": albums}
 
+
+# --------------------- DOWNLOAD ---------------------
+class DownloadRequest(BaseModel):
+    collection_id: int
+    results: list[dict]  # Full list of search results to pick the album from
 
 @app.post("/albums/download")
 async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
@@ -237,23 +247,97 @@ def moveAlbum(body: ConvertRequest):
     """
 
     source = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
-    destination = Link.DESTINATION_DIR / f"{body.artist} - {body.album_name}"
+    destination = Link.DESTINATION_DIR / f"{body.artist} - {body.album_name}" # NOT where the albums will download
+
+    yield f"[MOVE] Source: {source}"
+    yield f"[MOVE] Destination: {destination}"
+    yield f"[MOVE] Source exists: {source.exists()}"
+    yield f"[MOVE] Destination exists: {destination.exists()}"
 
     if not source.exists():
+        yield f"[MOVE] Album not found at {source}"
         raise HTTPException(status_code=404, detail=f"Album not found at {source}")
 
     if destination.exists():
+        yield f"[MOVE] Album already exists at {destination}"
         # If an album already exists in One-Drive
-        if body.overwrite:
+
+        if body.overwrite: # Enable overwrite clause
+            yield f"[MOVE] Overwrite enabled. Removing {destination}..."
             shutil.rmtree(destination)
         else:
             raise HTTPException(status_code=409, detail=f"Album already exists at {destination}")
     try:
+        yield f"[MOVE] Moving {source} -> {Link.DESTINATION_DIR} "
         shutil.move(source, Link.DESTINATION_DIR)
+
+        yield f"[MOVE] Move completed!"
+        yield f"[MOVE] Final Location {destination}"
         return {"status" : "success", "message": f"Moved to {Link.DESTINATION_DIR}"}
 
     except Exception as e:
+        yield f"[MOVE] ERROR: {e}"
         raise HTTPException(status_code=505, detail=str(e))
+
+# @app.post("/albums/move-album")
+# async def moveAlbum(body: ConvertRequest):
+#     source = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
+#     destination = Link.DESTINATION_DIR / f"{body.artist} - {body.album_name}"
+#
+#     async def streamOutput():
+#         yield f"data: [MOVE] Source: {source}\n\n"
+#         yield f"data: [MOVE] Destination: {destination}\n\n"
+#         yield f"data: [MOVE] Source exists: {source.exists()}\n\n"
+#
+#         if not source.exists():
+#             yield f"data: [ERROR] Album not found at {source}\n\n"
+#             return
+#
+#         yield f"data: [MOVE] Destination exists: {destination.exists()}\n\n"
+#
+#         if destination.exists():
+#             if body.overwrite:
+#                 yield f"data: [MOVE] Overwrite enabled, removing {destination}...\n\n"
+#                 try:
+#                     shutil.rmtree(destination)
+#                 except Exception as e:
+#                     yield f"data: [ERROR] Failed to remove existing: {e}\n\n"
+#                     return
+#             else:
+#                 yield f"data: [ERROR] Album already exists at {destination}\n\n"
+#                 return
+#
+#         # Retry logic — OneDrive locks folders while syncing
+#         max_retries = 5
+#         retry_delay = 2  # seconds
+#
+#         for attempt in range(max_retries):
+#             try:
+#                 yield f"data: [MOVE] Attempt {attempt + 1}/{max_retries}: Moving {source.name}...\n\n"
+#                 shutil.move(str(source), str(Link.DESTINATION_DIR))
+#                 yield f"data: [MOVE] Move completed!\n\n"
+#                 yield f"data: [MOVE] Final location: {destination}\n\n"
+#                 yield "data: [DONE]\n\n"
+#                 return
+#
+#             except PermissionError as e:
+#                 if attempt < max_retries - 1:
+#                     yield f"data: [MOVE] Access denied (OneDrive may be syncing), retrying in {retry_delay}s...\n\n"
+#                     time.sleep(retry_delay)
+#                 else:
+#                     yield f"data: [ERROR] Permission denied after {max_retries} attempts. OneDrive may be locked.\n\n"
+#                     yield f"data: [ERROR] Try pausing OneDrive sync or moving manually.\n\n"
+#                     return
+#
+#             except Exception as e:
+#                 yield f"data: [ERROR] {str(e)}\n\n"
+#                 return
+#
+#     return StreamingResponse(
+#         streamOutput(),
+#         media_type="text/event-stream",
+#         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+#     )
 
 @app.post('/albums/rename-folder')
 def renameFolder(body: ConvertRequest):
@@ -261,16 +345,16 @@ def renameFolder(body: ConvertRequest):
     old_album_location = artist_dir / body.album_name
     new_album_name = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
 
-    print(f"[RENAME] Looking for: {old_album_location}", flush=True)
-    print(f"[RENAME] Exists: {old_album_location.exists()}", flush=True)
-    print(f"[RENAME] artist_dir contents: {list(artist_dir.iterdir()) if artist_dir.exists() else 'DIR NOT FOUND'}",
-          flush=True)
+
+    yield f"[RENAME] Looking for: {old_album_location}"
+    yield f"[RENAME] Exists: {old_album_location.exists()}"
+    yield f"[RENAME] artist_dir contents: {list(artist_dir.iterdir()) if artist_dir.exists() else 'DIR NOT FOUND'}"
 
     if not old_album_location.exists():
         raise HTTPException(status_code=404, detail=f"Album folder not found at {old_album_location}")
 
     shutil.move(old_album_location,new_album_name)
-    print(f"[RENAME] {old_album_location} -> {new_album_name}", flush=True)
+    yield f"[RENAME] {old_album_location} -> {new_album_name}"
 
     if artist_dir.exists() and artist_dir.is_dir():
         if not any(artist_dir.iterdir()):
