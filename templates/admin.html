@@ -250,7 +250,7 @@
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Username</label>
-                    <input type="text" id="newUsername" placeholder="New username" required>
+                    <input autocomplete=off type="text" id="newUsername" placeholder="New username" required>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Password</label>
@@ -289,7 +289,9 @@
 <script>
     async function loadUsers() {
         try {
-            const response = await fetch("http://localhost:8000/api/users");
+            const response = await fetch("http://localhost:8000/api/users", {
+                credentials: "include"  // Required for session cookies
+            });
             const data = await response.json();
             const list = document.getElementById("usersList");
 
@@ -299,16 +301,16 @@
             }
 
             list.innerHTML = data.users.map(user => `
-                <div class="user-item">
-                    <div class="user-info">
-                        <span class="user-name">${user}</span>
-                        ${user === "admin" ? '<span class="user-badge">ADMIN</span>' : ''}
-                    </div>
-                    ${user !== "admin" ? `
-                        <button class="btn btn-danger" onclick="deleteUser('${user}')">Delete</button>
-                    ` : ''}
+            <div class="user-item">
+                <div class="user-info">
+                    <span class="user-name">${user.username}</span>
+                    ${user.is_admin ? '<span class="user-badge">ADMIN</span>' : ''}
                 </div>
-            `).join("");
+                ${!user.is_admin ? `
+                    <button class="btn btn-danger" onclick="deleteUser('${user.username}')">Delete</button>
+                ` : ''}
+            </div>
+        `).join("");
         } catch (err) {
             console.error(err);
         }

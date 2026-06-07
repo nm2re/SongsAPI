@@ -348,8 +348,9 @@
             max-height: 160px;
             overflow-y: auto;
             white-space: pre-wrap;
+            word-break: break-all;  /* Break long lines */
             display: none;
-            line-height: 1.6;
+            line-height: 1.4;
             letter-spacing: 0.03em;
         }
 
@@ -503,6 +504,29 @@
             display: block;
             margin-bottom: 12px;
         }
+
+        #downloadsPanel::-webkit-scrollbar { width: 4px; }
+        #downloadsPanel::-webkit-scrollbar-track { background: transparent; }
+        #downloadsPanel::-webkit-scrollbar-thumb { background: var(--border-bright); }
+
+        .download-item {
+            padding: 12px;
+            border: 1px solid var(--border);
+            margin-bottom: 8px;
+            background: #0a0a0a;
+        }
+
+        .download-item-title {
+            color: var(--text);
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .download-item-progress {
+            font-size: 10px;
+            color: var(--accent);
+            letter-spacing: 0.05em;
+        }
     </style>
 </head>
 <body>
@@ -516,17 +540,35 @@
         <span class="dot"></span>API READY — localhost:8000
     </div>
 
-    <div class="header-actions">
-        <button onclick="window.location.href='/admin'" style="border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+    <div class="header-actions" id="headerActions">
+        <!-- Admin button — shown only for admins -->
+        <button id="adminBtn" style="display:none; border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+                onclick="window.location.href='/admin'"
                 onmouseover="this.style.borderColor='var(--accent)'; this.style.color='var(--accent)'"
                 onmouseout="this.style.borderColor='#555'; this.style.color='#888'">
             ADMIN
         </button>
-        <button onclick="logout()" style="border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+
+        <!-- Downloads button -->
+        <button id="downloadsBtn" style="border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+                onclick="toggleDownloads()"
+                onmouseover="this.style.borderColor='var(--accent)'; this.style.color='var(--accent)'"
+                onmouseout="this.style.borderColor='#555'; this.style.color='#888'">
+            DOWNLOADS (<span id="downloadCount">0</span>)
+        </button>
+
+        <button style="border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
+                onclick="logout()"
                 onmouseover="this.style.borderColor='var(--accent)'; this.style.color='var(--accent)'"
                 onmouseout="this.style.borderColor='#555'; this.style.color='#888'">
             LOGOUT
         </button>
+    </div>
+
+    <!-- Downloads panel — slides in from the right -->
+    <div id="downloadsPanel" style="position: fixed; right: -400px; top: 60px; width: 400px; height: calc(100vh - 60px); background: var(--surface); border-left: 1px solid var(--border); padding: 20px; overflow-y: auto; transition: right 0.3s; z-index: 999;">
+        <div style="font-family: 'Bebas Neue', sans-serif; font-size: 1.2rem; letter-spacing: 0.15em; margin-bottom: 20px; color: var(--accent);">DOWNLOADS</div>
+        <div id="downloadsList" style="font-size: 12px; color: var(--muted);">No active downloads</div>
     </div>
 </header>
 
@@ -535,6 +577,7 @@
         <div class="search-label">Search Albums</div>
         <div class="search-row">
             <input
+                    autocomplete="off"
                     type="text"
                     id="searchInput"
                     placeholder="Artist or album name..."
@@ -559,11 +602,11 @@
         <div class="modal-subtitle">Update folder name and metadata</div>
         <div class="modal-field">
             <label>Artist</label>
-            <input type="text" id="renameArtist" placeholder="Artist name">
+            <input autocomplete=off type="text" id="renameArtist" placeholder="Artist name">
         </div>
         <div class="modal-field">
             <label>Album Name</label>
-            <input type="text" id="renameAlbum" placeholder="Album name">
+            <input autocomplete=off type="text" id="renameAlbum" placeholder="Album name">
         </div>
         <div class="modal-actions">
             <button class="btn-modal-cancel" onclick="closeRenameModal()">Cancel</button>
@@ -573,6 +616,85 @@
 </div>
 
 <script>
+
+    let currentDownloads = {};
+
+    // Check if user is admin on page load
+    async function checkAdmin() {
+        try {
+            const response = await fetch("http://localhost:8000/api/user-info");
+            const data = await response.json();
+
+            if (data.is_admin) {
+                document.getElementById("adminBtn").style.display = "block";
+            }
+        } catch (err) {
+            console.error("Error checking admin status:", err);
+        }
+    }
+
+    function toggleDownloads() {
+        const panel = document.getElementById("downloadsPanel");
+        if (panel.style.right === "0px") {
+            panel.style.right = "-400px";
+        } else {
+            panel.style.right = "0px";
+        }
+    }
+
+    function addDownload(collectionId, albumName, artist) {
+        currentDownloads[collectionId] = {
+            id: collectionId,
+            albumName: albumName,
+            artist: artist,
+            status: "downloading",
+            startTime: new Date()
+        };
+        updateDownloadsPanel();
+    }
+
+    function updateDownloadStatus(collectionId, status) {
+        if (currentDownloads[collectionId]) {
+            currentDownloads[collectionId].status = status;
+            updateDownloadsPanel();
+
+            if (status === "done" || status === "error") {
+                setTimeout(() => {
+                    delete currentDownloads[collectionId];
+                    updateDownloadsPanel();
+                }, 3000); // Remove from list 3 seconds after completion
+            }
+        }
+    }
+
+    function updateDownloadsPanel() {
+        const list = document.getElementById("downloadsList");
+        const count = Object.keys(currentDownloads).length;
+        document.getElementById("downloadCount").textContent = count;
+
+        if (count === 0) {
+            list.innerHTML = '<div style="color: var(--muted); font-size: 12px;">No active downloads</div>';
+            return;
+        }
+
+        list.innerHTML = Object.values(currentDownloads).map(dl => `
+        <div class="download-item">
+            <div class="download-item-title">${dl.albumName}</div>
+            <div style="font-size: 10px; color: var(--muted); margin-bottom: 4px;">${dl.artist}</div>
+            <div class="download-item-progress">${dl.status.toUpperCase()}</div>
+        </div>
+    `).join("");
+    }
+
+    async function logout() {
+        await fetch("http://localhost:8000/api/logout", { method: "POST" });
+        window.location.href = "/login";
+    }
+
+    // Check admin on page load
+    checkAdmin();
+
+
     let currentResults = [];
     let renameTarget = null; // { collectionId, originalArtist, originalAlbum }
 
@@ -643,9 +765,12 @@
     }
 
     async function downloadAlbum(collectionId) {
+        const album = currentResults.find(r => r.collection_id === collectionId);
+        addDownload(collectionId, album.album_name, album.artist);
+
         const statusEl = document.getElementById(`status-${collectionId}`);
-        const logBox   = document.getElementById(`log-${collectionId}`);
-        const btn      = document.getElementById(`dl-btn-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
+        const btn = document.getElementById(`dl-btn-${collectionId}`);
 
         btn.disabled = true;
         logBox.style.display = "block";
@@ -656,32 +781,49 @@
         const response = await fetch("http://localhost:8000/albums/download", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ collection_id: collectionId, results: currentResults })
+            credentials: "include",
+            body: JSON.stringify({
+                collection_id: collectionId,
+                results: currentResults
+            })
         });
 
-        const reader  = response.body.getReader();
+        const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = "";
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const text  = decoder.decode(value);
-            const lines = text.split("\n").filter(l => l.startsWith("data: "));
+            buffer += decoder.decode(value);
+            const lines = buffer.split("\n");
+
+            // Keep the last incomplete line in buffer
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
-                const content = line.replace("data: ", "");
+                const trimmed = line.trim();
+                if (!trimmed.startsWith("data: ")) continue;
+
+                const content = trimmed.replace("data: ", "").trim();
+                if (!content) continue;
+
+                console.log("[DOWNLOAD]", content);  // Debug
 
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
-                    statusEl.textContent = "✓ Done";
+                    statusEl.textContent = "✓ Downloaded";
                     btn.disabled = false;
+                    updateDownloadStatus(collectionId, "done");
+                    showActions(collectionId);
                     return;
                 }
 
                 if (content.startsWith("[ERROR]")) {
                     statusEl.className = "status-tag error";
                     statusEl.textContent = "✗ Error";
+                    updateDownloadStatus(collectionId, "error");
                     logBox.textContent += content + "\n";
                     btn.disabled = false;
                     return;
@@ -758,25 +900,37 @@
         statusEl.className = "status-tag moving";
         statusEl.textContent = "Moving...";
 
-        try {
-            const response = await fetch("http://localhost:8000/albums/move-album", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ artist, album_name: albumName, overwrite })
-            });
+        const response = await fetch("http://localhost:8000/albums/move-album", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ artist, album_name: albumName, overwrite })
+        });
 
-            const data = await response.json();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-            if (response.ok) {
-                statusEl.className = "status-tag moved";
-                statusEl.textContent = "✓ Moved";
-            } else {
-                statusEl.className = "status-tag error";
-                statusEl.textContent = "✗ " + data.detail;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const text = decoder.decode(value);
+            const lines = text.split("\n").filter(l => l.startsWith("data: "));
+
+            for (const line of lines) {
+                const content = line.replace("data: ", "").trim();
+
+                if (content === "[DONE]") {
+                    statusEl.className = "status-tag done";
+                    statusEl.textContent = "✓ Moved";
+                    return;
+                }
+
+                if (content.startsWith("[ERROR]")) {
+                    statusEl.className = "status-tag error";
+                    statusEl.textContent = "✗ Error";
+                    return;
+                }
             }
-        } catch (err) {
-            statusEl.className = "status-tag error";
-            statusEl.textContent = "✗ Failed";
         }
     }
 
@@ -802,65 +956,67 @@
 
         const newArtist = document.getElementById("renameArtist").value.trim();
         const newAlbum  = document.getElementById("renameAlbum").value.trim();
-        if (!newArtist || !newAlbum) return;
+
+        console.log("Sending rename:", { newArtist, newAlbum });  // Debug
+
+        if (!newArtist || !newAlbum) {
+            alert("Artist and album name required");
+            return;
+        }
 
         const { collectionId } = renameTarget;
         const statusEl = document.getElementById(`status-${collectionId}`);
 
         document.getElementById("renameModal").style.display = "none";
-
-        statusEl.className = "status-tag renaming";
+        statusEl.className = "status-tag moving";
         statusEl.textContent = "Renaming...";
 
-        try {
-            const response = await fetch("http://localhost:8000/albums/rename-folder", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    artist: renameTarget.originalArtist,
-                    album_name: renameTarget.originalAlbum,
-                    new_artist: newArtist,
-                    new_album_name: newAlbum
-                })
-            });
+        const response = await fetch("http://localhost:8000/albums/rename-folder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                artist: renameTarget.originalArtist,
+                album_name: renameTarget.originalAlbum,
+                new_artist: newArtist,
+                new_album_name: newAlbum
+            })
+        });
 
-            const data = await response.json();
+        console.log("Response status:", response.status);  // Debug
 
-            if (response.ok) {
-                statusEl.className = "status-tag renamed";
-                statusEl.textContent = "✓ Renamed";
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = "";
 
-                // Update the card's displayed name and meta live
-                const card = document.getElementById(`album-${collectionId}`);
-                if (card) {
-                    card.querySelector(".album-name").textContent = newAlbum;
-                    const metaEl = card.querySelector(".album-meta");
-                    const yearEl = metaEl.querySelector(".album-year");
-                    metaEl.childNodes[0].textContent = newArtist + " ";
-                    // Patch inline onclick references for move/convert/rename
-                    const escaped = (s) => s.replace(/'/g, "\\'");
-                    card.querySelector(".btn-rename").setAttribute(
-                        "onclick",
-                        `openRenameModal('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`
-                    );
-                    card.querySelector(".btn-convert").setAttribute(
-                        "onclick",
-                        `convertAlbum('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`
-                    );
-                    card.querySelector(".btn-move").setAttribute(
-                        "onclick",
-                        `moveAlbum('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`
-                    );
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const text = decoder.decode(value);
+            fullText += text;
+            console.log("Received:", text);  // Debug all SSE data
+
+            const lines = text.split("\n").filter(l => l.startsWith("data: "));
+
+            for (const line of lines) {
+                const content = line.replace("data: ", "").trim();
+
+                if (content === "[DONE]") {
+                    statusEl.className = "status-tag done";
+                    statusEl.textContent = "✓ Renamed";
+                    // ... update card
+                    return;
                 }
-            } else {
-                statusEl.className = "status-tag error";
-                statusEl.textContent = "✗ " + (data.detail || "Error");
+
+                if (content.startsWith("[ERROR]")) {
+                    statusEl.className = "status-tag error";
+                    statusEl.textContent = "✗ Error";
+                    return;
+                }
             }
-        } catch (err) {
-            statusEl.className = "status-tag error";
-            statusEl.textContent = "✗ Failed";
         }
 
+        console.log("Full response:", fullText);  // Debug
         renameTarget = null;
     }
 
