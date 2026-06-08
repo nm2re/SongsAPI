@@ -44,12 +44,6 @@ async def index(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     return FileResponse("templates/index.html")
 
-
-# USERS = {
-#     Token.USERNAME : Token.PASSWORD,
-#     Token.ADMIN_USERNAME : Token.ADMIN_PASSWORD
-# }
-
 # -------------------- ADMIN API --------------------
 
 @app.get("/login")
@@ -195,23 +189,88 @@ def searchAlbum(q: str, limit: int = 50):
     """
 
     response = requests.get(Link.ITUNES_URL, params={"term": q, "entity": "album", "media": "music","limit": limit})
-    results = response.json()["results"]
+    results = response.json().get("results", [])
+
+    # If no results, try removing special characters
+    if not results:
+        cleaned_query = "".join(c if c.isalnum() or c.isspace() else "" for c in q).strip()
+        if cleaned_query and cleaned_query != q:
+            print(f"[SEARCH] No results for '{q}', trying cleaned: '{cleaned_query}'")
+            response = requests.get(Link.ITUNES_URL, params={
+                "term": cleaned_query,
+                "entity": "album",
+                "limit": limit,
+                "country": "us"
+            })
+
+    results = response.json().get("results", []) # returns blank [] if there are no results
+
+
+    if not results and " by " in q:
+        artist = q.split(" by ")[-1].strip()
+        print(f"[SEARCH] No results for '{q}', trying artist: '{artist}'")
+        response = requests.get(Link.ITUNES_URL, params={
+            "term": artist,
+            "entity": "album",
+            "limit": limit,
+            "country": "us"
+        })
+        results = response.json().get("results", [])
+
 
     albums = []
     for i, album in enumerate(results):
         if album.get("collectionType") != "Album":
-            continue  # Skip non-album results
-        albums.append(
-            {
-                "index": i,  # index added to pick which album to download
-                "collection_id": album["collectionId"],
-                "album_name": album["collectionName"],
-                "artist": album["artistName"],
-                "apple_music_url": album["collectionViewUrl"],
-                "year": album["releaseDate"][:4]  # extracting year from release date
-            }
-        )
+            continue
+        albums.append({
+            "index": len(albums),
+            "collection_id": album["collectionId"],
+            "album_name": album["collectionName"],
+            "artist": album["artistName"],
+            "apple_music_url": album["collectionViewUrl"],
+            "year": album["releaseDate"][:4] if album.get("releaseDate") else "N/A"
+        })
     return {"results": albums}
+
+
+@app.get("/albums/lookup")
+def urlAlbumLookup(url: str, collection_id: int = None):
+    """
+    If the search function does not result in the album that you want to download, then directly paste the album link to find it and download
+    """
+
+
+    if url and not collection_id:
+        # Example URL for apple music -> https://music.apple.com/us/album/1359292515
+        parts = url.rstrip("/").split("/")
+
+        try:
+            collection_id = int(parts[-1]) # last component of the URL is the ID
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=400, detail="Invalid URL Format")
+
+
+        if not collection_id:
+            raise HTTPException(status_code=400, detail="Collection ID not found in URL")
+
+        response = requests.get("https://itunes.apple.com/lookup", params={"id": collection_id, "entity": "album"})
+
+        results = response.json().get("results", [])
+        album = next((r for r in results if r.get("wrapperType") == "collection"), None)
+
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+
+        return {
+            "collection_id": album["collectionId"],
+            "album_name": album["collectionName"],
+            "artist": album["artistName"],
+            "apple_music_url": album["collectionViewUrl"],
+            "year": album["releaseDate"][:4] if album.get("releaseDate") else "N/A"
+        }
+
+
+
 
 
 # --------------------- DOWNLOAD ---------------------
@@ -282,7 +341,7 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
             yield "data: [DONE]\n\n"
         else:
             yield f"data: [ERROR] gamdl exited with code {process.returncode}\n\n"
-    return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}) # headers to prevent buffering on nginx if used as a reverse proxy, also cache control to prevent caching of the stream
+    return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}) #
 
 class MetadataRequest(BaseModel):
     folder: str

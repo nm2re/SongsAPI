@@ -505,27 +505,62 @@
             margin-bottom: 12px;
         }
 
-        #downloadsPanel::-webkit-scrollbar { width: 4px; }
-        #downloadsPanel::-webkit-scrollbar-track { background: transparent; }
-        #downloadsPanel::-webkit-scrollbar-thumb { background: var(--border-bright); }
+        #downloadsPanel {
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+        }
+
+        #downloadsPanel::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        #downloadsPanel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #downloadsPanel::-webkit-scrollbar-thumb {
+            background: var(--border-bright);
+            border-radius: 2px;
+        }
+
+        #downloadsList {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
 
         .download-item {
             padding: 12px;
             border: 1px solid var(--border);
-            margin-bottom: 8px;
             background: #0a0a0a;
+            border-radius: 2px;
         }
 
         .download-item-title {
             color: var(--text);
             font-weight: 500;
+            font-size: 12px;
             margin-bottom: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .download-item-artist {
+            font-size: 10px;
+            color: var(--muted);
+            margin-bottom: 6px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .download-item-progress {
             font-size: 10px;
             color: var(--accent);
             letter-spacing: 0.05em;
+            text-transform: uppercase;
+            font-weight: 500;
         }
     </style>
 </head>
@@ -587,6 +622,30 @@
         </div>
     </div>
 
+    <div class="search-section">
+        <div class="search-label">Or paste Apple Music URL</div>
+        <div class="search-row">
+            <input
+                    autocomplete="off"
+                    type="text"
+                    id="lookupInput"
+                    placeholder="https://music.apple.com/us/album/name/123456..."
+                    onkeydown="if(event.key==='Enter') lookupByUrl()"
+            >
+            <button onclick="lookupByUrl()">Lookup</button>
+        </div>
+    </div>
+
+    <!-- Pinned downloads section -->
+    <div id="pinnedSection" style="display:none; margin-bottom: 32px;">
+        <div class="results-header">
+            <span class="results-label">Active Downloads</span>
+            <span class="results-count" id="pinnedCount">0</span>
+        </div>
+        <div id="pinnedDownloads"></div>
+    </div>
+
+    <!-- Search results section -->
     <div id="results">
         <div class="empty-state">
             <span class="big">SEARCH</span>
@@ -650,6 +709,7 @@
             status: "downloading",
             startTime: new Date()
         };
+        console.log("Added to downloads:", collectionId, currentDownloads);
         updateDownloadsPanel();
     }
 
@@ -658,32 +718,53 @@
             currentDownloads[collectionId].status = status;
             updateDownloadsPanel();
 
+            // Only remove completed items after a delay
             if (status === "done" || status === "error") {
                 setTimeout(() => {
                     delete currentDownloads[collectionId];
                     updateDownloadsPanel();
-                }, 3000); // Remove from list 3 seconds after completion
+                }, 5000); // Show for 5 seconds after completion
             }
         }
     }
 
     function updateDownloadsPanel() {
         const list = document.getElementById("downloadsList");
-        const count = Object.keys(currentDownloads).length;
+        const downloads = Object.values(currentDownloads);
+        const count = downloads.length;
+
         document.getElementById("downloadCount").textContent = count;
 
         if (count === 0) {
-            list.innerHTML = '<div style="color: var(--muted); font-size: 12px;">No active downloads</div>';
+            list.innerHTML = '<div style="color: var(--muted); font-size: 12px; padding: 12px;">No active downloads</div>';
             return;
         }
 
-        list.innerHTML = Object.values(currentDownloads).map(dl => `
-        <div class="download-item">
-            <div class="download-item-title">${dl.albumName}</div>
-            <div style="font-size: 10px; color: var(--muted); margin-bottom: 4px;">${dl.artist}</div>
-            <div class="download-item-progress">${dl.status.toUpperCase()}</div>
-        </div>
-    `).join("");
+        list.innerHTML = downloads.map(dl => {
+            let statusColor = 'var(--accent)';
+            let statusText = dl.status.toUpperCase();
+
+            if (dl.status === 'done') {
+                statusColor = '#00ff00';
+                statusText = '✓ DONE';
+            }
+            if (dl.status === 'error') {
+                statusColor = '#ff0000';
+                statusText = '✗ ERROR';
+            }
+            if (dl.status === 'converting') {
+                statusColor = '#ffaa00';
+                statusText = '⟳ CONVERTING';
+            }
+
+            return `
+            <div class="download-item">
+                <div class="download-item-title">${dl.albumName}</div>
+                <div class="download-item-artist">${dl.artist}</div>
+                <div class="download-item-progress" style="color: ${statusColor};">${statusText}</div>
+            </div>
+        `;
+        }).join("");
     }
 
     async function logout() {
@@ -696,7 +777,122 @@
 
 
     let currentResults = [];
-    let renameTarget = null; // { collectionId, originalArtist, originalAlbum }
+    let pinnedAlbums = new Set();
+    let pinnedAlbumsDetails = {};  // Store details for all pinned albums
+    let downloadLogs = {};
+    let renameTarget = null;
+
+    function saveState() {
+        localStorage.setItem("pinnedAlbums", JSON.stringify(Array.from(pinnedAlbums)));
+        localStorage.setItem("pinnedAlbumsDetails", JSON.stringify(pinnedAlbumsDetails));
+        localStorage.setItem("currentResults", JSON.stringify(currentResults));
+        localStorage.setItem("downloadLogs", JSON.stringify(downloadLogs));
+    }
+
+    function restoreState() {
+        const saved = localStorage.getItem("pinnedAlbums");
+        const savedDetails = localStorage.getItem("pinnedAlbumsDetails");
+        const savedResults = localStorage.getItem("currentResults");
+        const savedLogs = localStorage.getItem("downloadLogs");
+
+        if (savedResults) {
+            currentResults = JSON.parse(savedResults);
+        }
+
+        if (savedDetails) {
+            pinnedAlbumsDetails = JSON.parse(savedDetails);
+        }
+
+        if (savedLogs) {
+            downloadLogs = JSON.parse(savedLogs);
+        }
+
+        if (saved) {
+            const pinned = JSON.parse(saved);
+            const pinnedSection = document.getElementById("pinnedSection");
+            const pinnedDownloads = document.getElementById("pinnedDownloads");
+
+            pinned.forEach(id => {
+                // Get album details from pinnedAlbumsDetails, not currentResults
+                const album = pinnedAlbumsDetails[id];
+                if (album) {
+                    pinnedAlbums.add(id);
+                    createAlbumCard(album, pinnedDownloads);
+
+                    // Determine status from logs
+                    let status = "downloading";
+                    if (downloadLogs[id]) {
+                        if (downloadLogs[id].includes("[DONE]")) {
+                            status = "done";
+                        } else if (downloadLogs[id].includes("[ERROR]")) {
+                            status = "error";
+                        }
+                    }
+
+                    // Restore to downloads panel
+                    addDownload(id, album.album_name, album.artist);
+                    currentDownloads[id].status = status;
+
+                    // Restore log content and status
+                    setTimeout(() => {
+                        const logBox = document.getElementById(`log-${id}`);
+                        const statusEl = document.getElementById(`status-${id}`);
+
+                        if (logBox && downloadLogs[id]) {
+                            logBox.style.display = "block";
+                            logBox.textContent = downloadLogs[id];
+                            logBox.scrollTop = logBox.scrollHeight;
+                        }
+
+                        if (statusEl) {
+                            if (status === "done") {
+                                statusEl.className = "status-tag done";
+                                statusEl.textContent = "✓ Downloaded";
+                            } else if (status === "error") {
+                                statusEl.className = "status-tag error";
+                                statusEl.textContent = "✗ Error";
+                            } else if (downloadLogs[id] && downloadLogs[id].includes("[CONVERT]")) {
+                                statusEl.className = "status-tag converting";
+                                statusEl.textContent = "Converting";
+                            } else {
+                                statusEl.className = "status-tag downloading";
+                                statusEl.textContent = "Downloading";
+                            }
+                        }
+                    }, 100);
+                }
+            });
+
+            if (pinnedAlbums.size > 0) {
+                pinnedSection.style.display = "block";
+                document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+            }
+
+            updateDownloadsPanel();
+        }
+    }
+
+    function pinAlbum(collectionId, album) {
+        pinnedAlbums.add(collectionId);
+        pinnedAlbumsDetails[collectionId] = album;  // Save album details
+        saveState();
+
+        const pinnedSection = document.getElementById("pinnedSection");
+        const pinnedDownloads = document.getElementById("pinnedDownloads");
+
+        let existingCard = pinnedDownloads.querySelector(`#album-${collectionId}`);
+        if (!existingCard) {
+            const card = document.getElementById(`album-${collectionId}`);
+            if (card) {
+                pinnedDownloads.appendChild(card.cloneNode(true));
+            } else {
+                createAlbumCard(album, pinnedDownloads);
+            }
+        }
+
+        pinnedSection.style.display = "block";
+        document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+    }
 
     async function searchAlbums() {
         const query = document.getElementById("searchInput").value.trim();
@@ -706,11 +902,13 @@
         resultsDiv.innerHTML = `<div class="empty-state"><span class="big">...</span>Searching</div>`;
 
         const response = await fetch(
-            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}`
+            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}`,
+            { credentials: "include" }
         );
 
         const data = await response.json();
         currentResults = data.results;
+        saveState();
 
         if (!data.results.length) {
             resultsDiv.innerHTML = `<div class="empty-state"><span class="big">NONE</span>No results found</div>`;
@@ -718,54 +916,148 @@
         }
 
         resultsDiv.innerHTML = `
-            <div class="results-header">
-                <span class="results-label">Results</span>
-                <span class="results-count">${data.results.length} albums</span>
-            </div>
-        `;
+        <div class="results-header">
+            <span class="results-label">Results</span>
+            <span class="results-count">${data.results.length} albums</span>
+        </div>
+    `;
 
         data.results.forEach((album, i) => {
             const card = document.createElement('div');
             card.className = 'album-card';
             card.id = `album-${album.collection_id}`;
+
+            const escaped = (s) => s.replace(/'/g, "\\'");
+
             card.innerHTML = `
-                <div class="album-card-inner">
-                    <div class="album-index">${String(i + 1).padStart(2, '0')}</div>
-                    <div class="album-info">
-                        <div class="album-name">${album.album_name}</div>
-                        <div class="album-meta">
-                            ${album.artist}
-                            <span class="album-year">${album.year}</span>
-                        </div>
-                    </div>
-                    <div class="album-actions">
-                        <label class="overwrite-toggle" title="Overwrite if already exists at destination">
-                            <input type="checkbox" id="overwrite-${album.collection_id}">
-                            <span class="overwrite-label">overwrite</span>
-                        </label>
-                        <button class="btn btn-rename" onclick="openRenameModal('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
-                            Rename
-                        </button>
-                        <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
-                            → FLAC
-                        </button>
-                        <button class="btn btn-move" onclick="moveAlbum('${album.artist.replace(/'/g, "\\'")}', '${album.album_name.replace(/'/g, "\\'")}', ${album.collection_id})">
-                            Move
-                        </button>
-                        <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
-                            Download
-                        </button>
-                        <span class="status-tag" id="status-${album.collection_id}"></span>
+            <div class="album-card-inner">
+                <div class="album-index">${String(i + 1).padStart(2, '0')}</div>
+                <div class="album-info">
+                    <div class="album-name">${album.album_name}</div>
+                    <div class="album-meta">
+                        ${album.artist}
+                        <span class="album-year">${album.year}</span>
                     </div>
                 </div>
-                <div class="log-box" id="log-${album.collection_id}"></div>
-            `;
+                <div class="album-actions">
+                    <label class="overwrite-toggle" title="Overwrite if already exists at destination">
+                        <input type="checkbox" id="overwrite-${album.collection_id}">
+                        <span class="overwrite-label">overwrite</span>
+                    </label>
+                    <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
+                        1. Download
+                    </button>
+                    <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                        2. Rename
+                    </button>
+                    <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                        3. → FLAC
+                    </button>
+                    <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                        4. Move
+                    </button>
+                    <span class="status-tag" id="status-${album.collection_id}"></span>
+                </div>
+            </div>
+            <div class="log-box" id="log-${album.collection_id}"></div>
+        `;
             resultsDiv.appendChild(card);
         });
     }
 
+    async function lookupByUrl() {
+        const url = document.getElementById("lookupInput").value.trim();
+        if (!url) return;
+
+        const resultsDiv = document.getElementById("results");
+        resultsDiv.innerHTML = `<div class="empty-state"><span class="big">...</span>Looking up</div>`;
+
+        try {
+            const response = await fetch(`http://localhost:8000/albums/lookup?url=${encodeURIComponent(url)}`, {
+                credentials: "include"
+            });
+            const album = await response.json();
+
+            currentResults = [album];
+            saveState();
+
+            resultsDiv.innerHTML = `
+            <div class="results-header">
+                <span class="results-label">Result</span>
+                <span class="results-count">1 album</span>
+            </div>
+        `;
+
+            const card = document.createElement('div');
+            card.className = 'album-card';
+            card.id = `album-${album.collection_id}`;
+
+            const escaped = (s) => s.replace(/'/g, "\\'");
+
+            card.innerHTML = `
+            <div class="album-card-inner">
+                <div class="album-index">01</div>
+                <div class="album-info">
+                    <div class="album-name">${album.album_name}</div>
+                    <div class="album-meta">
+                        ${album.artist}
+                        <span class="album-year">${album.year}</span>
+                    </div>
+                </div>
+                <div class="album-actions">
+                    <label class="overwrite-toggle" title="Overwrite if already exists at destination">
+                        <input type="checkbox" id="overwrite-${album.collection_id}">
+                        <span class="overwrite-label">overwrite</span>
+                    </label>
+                    <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
+                        1. Download
+                    </button>
+                    <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                        2. Rename
+                    </button>
+                    <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                        3. → FLAC
+                    </button>
+                    <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                        4. Move
+                    </button>
+                    <span class="status-tag" id="status-${album.collection_id}"></span>
+                </div>
+            </div>
+            <div class="log-box" id="log-${album.collection_id}"></div>
+        `;
+            resultsDiv.appendChild(card);
+
+        } catch (err) {
+            resultsDiv.innerHTML = `<div class="empty-state"><span class="big">NONE</span>Album not found</div>`;
+        }
+    }
+
+
+
+
+    function showActions(collectionId) {
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        if (statusEl) {
+            statusEl.textContent = "Ready"
+        }
+    }
+
     async function downloadAlbum(collectionId) {
-        const album = currentResults.find(r => r.collection_id === collectionId);
+        // Get album from pinnedAlbumsDetails (persisted) or currentResults (current search)
+        let album = currentResults.find(r => r.collection_id === collectionId);
+        if (!album && pinnedAlbumsDetails[collectionId]) {
+            album = pinnedAlbumsDetails[collectionId];
+        }
+
+        if (!album) {
+            console.error("Album not found:", collectionId);
+            return;
+        }
+
+        // Pin this album to the top
+        pinAlbum(collectionId, album);
+
         addDownload(collectionId, album.album_name, album.artist);
 
         const statusEl = document.getElementById(`status-${collectionId}`);
@@ -775,6 +1067,7 @@
         btn.disabled = true;
         logBox.style.display = "block";
         logBox.textContent = "";
+        downloadLogs[collectionId] = "";
         statusEl.className = "status-tag downloading";
         statusEl.textContent = "Downloading";
 
@@ -784,7 +1077,7 @@
             credentials: "include",
             body: JSON.stringify({
                 collection_id: collectionId,
-                results: currentResults
+                results: currentResults.length > 0 ? currentResults : [album]
             })
         });
 
@@ -798,8 +1091,6 @@
 
             buffer += decoder.decode(value);
             const lines = buffer.split("\n");
-
-            // Keep the last incomplete line in buffer
             buffer = lines.pop() || "";
 
             for (const line of lines) {
@@ -809,13 +1100,12 @@
                 const content = trimmed.replace("data: ", "").trim();
                 if (!content) continue;
 
-                console.log("[DOWNLOAD]", content);  // Debug
-
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
                     statusEl.textContent = "✓ Downloaded";
                     btn.disabled = false;
                     updateDownloadStatus(collectionId, "done");
+                    saveState();
                     showActions(collectionId);
                     return;
                 }
@@ -825,51 +1115,122 @@
                     statusEl.textContent = "✗ Error";
                     updateDownloadStatus(collectionId, "error");
                     logBox.textContent += content + "\n";
+                    downloadLogs[collectionId] = logBox.textContent;
+                    saveState();
                     btn.disabled = false;
                     return;
                 }
 
                 logBox.textContent += content + "\n";
+                downloadLogs[collectionId] = logBox.textContent;
+                saveState();
                 logBox.scrollTop = logBox.scrollHeight;
             }
         }
     }
 
+    function createAlbumCard(album, container) {
+        const card = document.createElement('div');
+        card.className = 'album-card';
+        card.id = `album-${album.collection_id}`;
+
+        const escaped = (s) => s.replace(/'/g, "\\'");
+
+        card.innerHTML = `
+        <div class="album-card-inner">
+            <div class="album-index">●</div>
+            <div class="album-info">
+                <div class="album-name">${album.album_name}</div>
+                <div class="album-meta">
+                    ${album.artist}
+                    <span class="album-year">${album.year}</span>
+                </div>
+            </div>
+            <div class="album-actions">
+                <label class="overwrite-toggle" title="Overwrite if already exists at destination">
+                    <input type="checkbox" id="overwrite-${album.collection_id}">
+                    <span class="overwrite-label">overwrite</span>
+                </label>
+                <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
+                    1. Download
+                </button>
+                <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                    2. Rename
+                </button>
+                <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                    3. → FLAC
+                </button>
+                <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                    4. Move
+                </button>
+                <span class="status-tag" id="status-${album.collection_id}"></span>
+            </div>
+        </div>
+        <div class="log-box" id="log-${album.collection_id}"></div>
+    `;
+        container.appendChild(card);
+    }
+
     async function convertAlbum(artist, albumName, collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
         const logBox   = document.getElementById(`log-${collectionId}`);
-        const btn      = document.getElementById(`conv-btn-${collectionId}`);
 
-        btn.disabled = true;
+        if (!statusEl || !logBox) {
+            console.error("Album elements not found for:", collectionId);
+            return;
+        }
+
         logBox.style.display = "block";
-        logBox.textContent = "";
+        logBox.textContent += "\n[CONVERT] Starting conversion...\n";
+        downloadLogs[collectionId] = logBox.textContent;
         statusEl.className = "status-tag converting";
         statusEl.textContent = "Converting";
+
+        // Update downloads panel
+        if (currentDownloads[collectionId]) {
+            currentDownloads[collectionId].status = "converting";
+            updateDownloadsPanel();
+        }
 
         try {
             const response = await fetch("http://localhost:8000/albums/convert-flac", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ artist, album_name: albumName })
             });
 
             const reader  = response.body.getReader();
             const decoder = new TextDecoder();
+            let buffer = "";
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
-                const text  = decoder.decode(value);
-                const lines = text.split("\n").filter(l => l.startsWith("data: "));
+                buffer += decoder.decode(value);
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
 
                 for (const line of lines) {
-                    const content = line.replace("data: ", "");
+                    if (!line.trim().startsWith("data: ")) continue;
+
+                    const content = line.replace("data: ", "").trim();
+                    if (!content) continue;
 
                     if (content === "[DONE]") {
-                        statusEl.className = "status-tag converted";
-                        statusEl.textContent = "✓ FLAC";
-                        btn.disabled = false;
+                        statusEl.className = "status-tag done";
+                        statusEl.textContent = "✓ Converted";
+                        logBox.textContent += content + "\n";
+                        downloadLogs[collectionId] = logBox.textContent;
+
+                        // Update downloads panel
+                        if (currentDownloads[collectionId]) {
+                            currentDownloads[collectionId].status = "done";
+                            updateDownloadsPanel();
+                        }
+
+                        saveState();
                         return;
                     }
 
@@ -877,11 +1238,21 @@
                         statusEl.className = "status-tag error";
                         statusEl.textContent = "✗ Error";
                         logBox.textContent += content + "\n";
-                        btn.disabled = false;
+                        downloadLogs[collectionId] = logBox.textContent;
+
+                        // Update downloads panel
+                        if (currentDownloads[collectionId]) {
+                            currentDownloads[collectionId].status = "error";
+                            updateDownloadsPanel();
+                        }
+
+                        saveState();
                         return;
                     }
 
                     logBox.textContent += content + "\n";
+                    downloadLogs[collectionId] = logBox.textContent;
+                    saveState();
                     logBox.scrollTop = logBox.scrollHeight;
                 }
             }
@@ -889,9 +1260,22 @@
             statusEl.className = "status-tag error";
             statusEl.textContent = "✗ Failed";
             logBox.textContent += `[ERROR] ${err.message}\n`;
-            btn.disabled = false;
+            downloadLogs[collectionId] = logBox.textContent;
+
+            // Update downloads panel
+            if (currentDownloads[collectionId]) {
+                currentDownloads[collectionId].status = "error";
+                updateDownloadsPanel();
+            }
+
+            saveState();
         }
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        checkAdmin()
+        restoreState()
+    });
 
     async function moveAlbum(artist, albumName, collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
@@ -1028,10 +1412,6 @@
         }
     });
 
-    async function logout() {
-        await fetch("http://localhost:8000/api/logout", { method: "POST" });
-        window.location.href = "/login";
-    }
 </script>
 
 </body>
