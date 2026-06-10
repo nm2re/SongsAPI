@@ -923,45 +923,7 @@
     `;
 
         data.results.forEach((album, i) => {
-            const card = document.createElement('div');
-            card.className = 'album-card';
-            card.id = `album-${album.collection_id}`;
-
-            const escaped = (s) => s.replace(/'/g, "\\'");
-
-            card.innerHTML = `
-            <div class="album-card-inner">
-                <div class="album-index">${String(i + 1).padStart(2, '0')}</div>
-                <div class="album-info">
-                    <div class="album-name">${album.album_name}</div>
-                    <div class="album-meta">
-                        ${album.artist}
-                        <span class="album-year">${album.year}</span>
-                    </div>
-                </div>
-                <div class="album-actions">
-                    <label class="overwrite-toggle" title="Overwrite if already exists at destination">
-                        <input type="checkbox" id="overwrite-${album.collection_id}">
-                        <span class="overwrite-label">overwrite</span>
-                    </label>
-                    <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
-                        1. Download
-                    </button>
-                    <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                        2. Rename
-                    </button>
-                    <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                        3. → FLAC
-                    </button>
-                    <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                        4. Move
-                    </button>
-                    <span class="status-tag" id="status-${album.collection_id}"></span>
-                </div>
-            </div>
-            <div class="log-box" id="log-${album.collection_id}"></div>
-        `;
-            resultsDiv.appendChild(card);
+            createAlbumCard(album, resultsDiv);
         });
     }
 
@@ -987,47 +949,7 @@
                 <span class="results-count">1 album</span>
             </div>
         `;
-
-            const card = document.createElement('div');
-            card.className = 'album-card';
-            card.id = `album-${album.collection_id}`;
-
-            const escaped = (s) => s.replace(/'/g, "\\'");
-
-            card.innerHTML = `
-            <div class="album-card-inner">
-                <div class="album-index">01</div>
-                <div class="album-info">
-                    <div class="album-name">${album.album_name}</div>
-                    <div class="album-meta">
-                        ${album.artist}
-                        <span class="album-year">${album.year}</span>
-                    </div>
-                </div>
-                <div class="album-actions">
-                    <label class="overwrite-toggle" title="Overwrite if already exists at destination">
-                        <input type="checkbox" id="overwrite-${album.collection_id}">
-                        <span class="overwrite-label">overwrite</span>
-                    </label>
-                    <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
-                        1. Download
-                    </button>
-                    <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                        2. Rename
-                    </button>
-                    <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                        3. → FLAC
-                    </button>
-                    <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                        4. Move
-                    </button>
-                    <span class="status-tag" id="status-${album.collection_id}"></span>
-                </div>
-            </div>
-            <div class="log-box" id="log-${album.collection_id}"></div>
-        `;
-            resultsDiv.appendChild(card);
-
+            createAlbumCard(album, resultsDiv);
         } catch (err) {
             resultsDiv.innerHTML = `<div class="empty-state"><span class="big">NONE</span>Album not found</div>`;
         }
@@ -1151,6 +1073,9 @@
                     <input type="checkbox" id="overwrite-${album.collection_id}">
                     <span class="overwrite-label">overwrite</span>
                 </label>
+                <button class="btn btn-upload" id="upload-btn-${album.collection_id}" onclick="uploadAlbum(${album.collection_id})" style="background: var(--accent); color: #000; font-weight: bold;">
+                    ⬆ UPLOAD
+                </button>
                 <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
                     1. Download
                 </button>
@@ -1395,8 +1320,6 @@
         const newArtist = document.getElementById("renameArtist").value.trim();
         const newAlbum  = document.getElementById("renameAlbum").value.trim();
 
-        console.log("Sending rename:", { newArtist, newAlbum });  // Debug
-
         if (!newArtist || !newAlbum) {
             alert("Artist and album name required");
             return;
@@ -1404,14 +1327,22 @@
 
         const { collectionId } = renameTarget;
         const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
 
         document.getElementById("renameModal").style.display = "none";
+
+        // Show and prepare logbox
+        logBox.style.display = "block";
+        logBox.textContent += "\n[RENAME] Starting rename...\n";
+        downloadLogs[collectionId] = "";
+
         statusEl.className = "status-tag moving";
         statusEl.textContent = "Renaming...";
 
         const response = await fetch("http://localhost:8000/albums/rename-folder", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            credentials: "include",
             body: JSON.stringify({
                 artist: renameTarget.originalArtist,
                 album_name: renameTarget.originalAlbum,
@@ -1420,24 +1351,28 @@
             })
         });
 
-        console.log("Response status:", response.status);  // Debug
-
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = "";
+        let buffer = "";
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const text = decoder.decode(value);
-            fullText += text;
-            console.log("Received:", text);  // Debug all SSE data
-
-            const lines = text.split("\n").filter(l => l.startsWith("data: "));
+            buffer += decoder.decode(value);
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
+                if (!line.trim().startsWith("data: ")) continue;
+
                 const content = line.replace("data: ", "").trim();
+                if (!content) continue;
+
+                // Add to logbox
+                logBox.textContent += content + "\n";
+                downloadLogs[collectionId] = logBox.textContent;
+                logBox.scrollTop = logBox.scrollHeight;
 
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
@@ -1474,14 +1409,82 @@
                 if (content.startsWith("[ERROR]")) {
                     statusEl.className = "status-tag error";
                     statusEl.textContent = "✗ Error";
+                    saveState();
                     return;
                 }
             }
         }
 
-        console.log("Full response:", fullText);  // Debug
         renameTarget = null;
     }
+
+    async function renameAlbumDirect(artist, albumName, collectionId) {
+        // Renames album without showing modal - used by UPLOAD function
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
+
+        logBox.style.display = "block";
+        logBox.textContent += "\n[RENAME] Renaming folder...\n";
+        downloadLogs[collectionId] = logBox.textContent;
+
+        statusEl.className = "status-tag moving";
+        statusEl.textContent = "Renaming...";
+
+        const response = await fetch("http://localhost:8000/albums/rename-folder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+                artist: artist,
+                album_name: albumName,
+                new_artist: artist,
+                new_album_name: albumName
+            })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        return new Promise((resolve, reject) => {
+            (async () => {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value);
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop() || "";
+
+                    for (const line of lines) {
+                        if (!line.trim().startsWith("data: ")) continue;
+
+                        const content = line.replace("data: ", "").trim();
+                        if (!content) continue;
+
+                        logBox.textContent += content + "\n";
+                        downloadLogs[collectionId] = logBox.textContent;
+                        logBox.scrollTop = logBox.scrollHeight;
+
+                        if (content === "[DONE]") {
+                            statusEl.className = "status-tag done";
+                            statusEl.textContent = "✓ Renamed";
+                            resolve();
+                            return;
+                        }
+
+                        if (content.startsWith("[ERROR]")) {
+                            statusEl.className = "status-tag error";
+                            statusEl.textContent = "✗ Error";
+                            reject(new Error(content));
+                            return;
+                        }
+                    }
+                }
+            })();
+        });
+    }
+
 
     // Close modal on Escape
     document.addEventListener("keydown", (e) => {
@@ -1491,6 +1494,313 @@
         }
     });
 
+
+     // ALL IN ONE BUTTON TO UPLOAD THE ALBUM (PERFORM ALL 4 STEPS)
+    async function uploadAlbum(collectionId) {
+        // Get album from currentResults or pinnedAlbumsDetails
+        let album = currentResults.find(r => r.collection_id === collectionId);
+        if (!album && pinnedAlbumsDetails[collectionId]) {
+            album = pinnedAlbumsDetails[collectionId];
+        }
+
+        if (!album) {
+            console.error("Album not found:", collectionId);
+            return;
+        }
+
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
+
+        logBox.style.display = "block";
+        logBox.textContent = "[UPLOAD] Starting full upload process...\n";
+        downloadLogs[collectionId] = logBox.textContent;
+
+        statusEl.className = "status-tag downloading";
+        statusEl.textContent = "Uploading...";
+
+        const escaped = (s) => s.replace(/'/g, "\\'");
+        const artist = album.artist;
+        const albumName = album.album_name;
+
+        try {
+            // Step 1: Download
+            logBox.textContent += "\n[STEP 1/4] Downloading album...\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            await downloadAlbumStep(collectionId, album);
+            logBox.textContent += "[STEP 1/4] ✓ Download complete\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            // Step 2: Rename (Without Modal)
+            logBox.textContent += "\n[STEP 2/4] Renaming folder...\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            await renameAlbumDirect(artist, albumName, collectionId);
+            logBox.textContent += "[STEP 2/4] ✓ Rename complete\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            // Step 3: Convert
+            logBox.textContent += "\n[STEP 3/4] Converting to FLAC...\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            await convertAlbumStep(collectionId, artist, albumName);
+            logBox.textContent += "[STEP 3/4] ✓ Conversion complete\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            // Step 4: Move
+            logBox.textContent += "\n[STEP 4/4] Moving to destination...\n";
+            downloadLogs[collectionId] = logBox.textContent;
+            saveState();
+
+            const overwrite = document.getElementById(`overwrite-${collectionId}`).checked;
+            await moveAlbumStep(collectionId, artist, albumName, overwrite);
+            logBox.textContent += "[STEP 4/4] ✓ Move complete\n";
+            downloadLogs[collectionId] = logBox.textContent;
+
+            statusEl.className = "status-tag done";
+            statusEl.textContent = "✓ Complete";
+            updateDownloadStatus(collectionId, "done");
+            saveState();
+
+        } catch (err) {
+            logBox.textContent += `\n[ERROR] Upload failed: ${err.message}\n`;
+            downloadLogs[collectionId] = logBox.textContent;
+            statusEl.className = "status-tag error";
+            statusEl.textContent = "✗ Failed";
+            saveState();
+        }
+    }
+
+    // Individual step functions that return promises
+    async function downloadAlbumStep(collectionId, album) {
+        return new Promise((resolve, reject) => {
+            const logBox = document.getElementById(`log-${collectionId}`);
+            const originalDownloadAlbum = downloadAlbum;
+
+            // Intercept and wrap downloadAlbum to resolve when done
+            (async () => {
+                try {
+                    const response = await fetch("http://localhost:8000/albums/download", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({
+                            collection_id: collectionId,
+                            results: [album]
+                        })
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value);
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop() || "";
+
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (!trimmed.startsWith("data: ")) continue;
+
+                            const content = trimmed.replace("data: ", "").trim();
+                            if (!content) continue;
+
+                            if (content === "[DONE]") {
+                                updateDownloadStatus(collectionId, "done");
+                                resolve();
+                                return;
+                            }
+
+                            if (content.startsWith("[ERROR]")) {
+                                reject(new Error(content));
+                                return;
+                            }
+
+                            logBox.textContent += content + "\n";
+                            downloadLogs[collectionId] = logBox.textContent;
+                            logBox.scrollTop = logBox.scrollHeight;
+                        }
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            })();
+        });
+    }
+
+    async function renameAlbumStep(collectionId, artist, albumName) {
+        return new Promise((resolve, reject) => {
+            const logBox = document.getElementById(`log-${collectionId}`);
+
+            (async () => {
+                try {
+                    const response = await fetch("http://localhost:8000/albums/rename-folder", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({
+                            artist: artist,
+                            album_name: albumName,
+                            new_artist: artist,
+                            new_album_name: albumName
+                        })
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value);
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop() || "";
+
+                        for (const line of lines) {
+                            if (!line.trim().startsWith("data: ")) continue;
+
+                            const content = line.replace("data: ", "").trim();
+                            if (!content) continue;
+
+                            if (content === "[DONE]") {
+                                resolve();
+                                return;
+                            }
+
+                            if (content.startsWith("[ERROR]")) {
+                                reject(new Error(content));
+                                return;
+                            }
+
+                            logBox.textContent += content + "\n";
+                            downloadLogs[collectionId] = logBox.textContent;
+                            logBox.scrollTop = logBox.scrollHeight;
+                        }
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            })();
+        });
+    }
+
+    async function convertAlbumStep(collectionId, artist, albumName) {
+        return new Promise((resolve, reject) => {
+            const logBox = document.getElementById(`log-${collectionId}`);
+
+            (async () => {
+                try {
+                    const response = await fetch("http://localhost:8000/albums/convert-flac", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ artist, album_name: albumName })
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value);
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop() || "";
+
+                        for (const line of lines) {
+                            if (!line.trim().startsWith("data: ")) continue;
+
+                            const content = line.replace("data: ", "").trim();
+                            if (!content) continue;
+
+                            if (content === "[DONE]") {
+                                resolve();
+                                return;
+                            }
+
+                            if (content.startsWith("[ERROR]")) {
+                                reject(new Error(content));
+                                return;
+                            }
+
+                            logBox.textContent += content + "\n";
+                            downloadLogs[collectionId] = logBox.textContent;
+                            logBox.scrollTop = logBox.scrollHeight;
+                        }
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            })();
+        });
+    }
+
+    async function moveAlbumStep(collectionId, artist, albumName, overwrite) {
+        return new Promise((resolve, reject) => {
+            const logBox = document.getElementById(`log-${collectionId}`);
+
+            (async () => {
+                try {
+                    const response = await fetch("http://localhost:8000/albums/move-album", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ artist, album_name: albumName, overwrite })
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value);
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop() || "";
+
+                        for (const line of lines) {
+                            if (!line.trim().startsWith("data: ")) continue;
+
+                            const content = line.replace("data: ", "").trim();
+                            if (!content) continue;
+
+                            if (content === "[DONE]") {
+                                resolve();
+                                return;
+                            }
+
+                            if (content.startsWith("[ERROR]")) {
+                                reject(new Error(content));
+                                return;
+                            }
+
+                            logBox.textContent += content + "\n";
+                            downloadLogs[collectionId] = logBox.textContent;
+                            logBox.scrollTop = logBox.scrollHeight;
+                        }
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            })();
+        });
+    }
 </script>
 
 </body>
