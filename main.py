@@ -23,7 +23,7 @@ from models.database import *
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=Token.SECRET_KEY)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000"], allow_methods=["*"],allow_headers=["*"], allow_credentials=True,)  # Replace Allow origins with proper url later when deploying
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "https://blvaine.ddns.net/songs-api"], allow_methods=["*"],allow_headers=["*"], allow_credentials=True,)  # Replace Allow origins with proper url later when deploying
 
 Link.setup() # setup .mkdir() function
 
@@ -342,10 +342,10 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         if process.returncode == 0:
             folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
             update_year(match["artist"], match["album_name"], match["year"])
-            yield "data: [METADATA] Year Updated!\n\n"
-            yield "data: [DONE]\n\n"
+            yield "data: [METADATA][UPDATE YEAR] Year Updated!\n\n"
+            yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
         else:
-            yield f"data: [ERROR] gamdl exited with code {process.returncode}\n\n"
+            yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
     return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}) #
 
 class MetadataRequest(BaseModel):
@@ -470,7 +470,7 @@ async def convertToFLAC(body: ConvertRequest):
         try:
             folders = [f for f in Link.DOWNLOAD_DIR.iterdir() if f.is_dir()]
         except Exception as e:
-            yield f"data: [ERROR] Could not read download dir: {e}\n\n"
+            yield f"data: [CONVERT][ERROR] Could not read download dir: {e}\n\n"
             return
 
         # 1. Try exact normalized match
@@ -491,7 +491,7 @@ async def convertToFLAC(body: ConvertRequest):
                 yield f"data: [CONVERT] Exact match failed, using most recently modified: {folder.name}\n\n"
 
         if folder is None:
-            yield f"data: [ERROR] No matching folder found for: {expected_name}\n\n"
+            yield f"data: [CONVERT][ERROR] No matching folder found for: {expected_name}\n\n"
             return
 
         yield f"data: [CONVERT] Matched folder: {folder.name}\n\n"
@@ -531,9 +531,9 @@ async def convertToFLAC(body: ConvertRequest):
         process.wait()
 
         if process.returncode != 0:
-            yield f"data: [ERROR] Conversion failed with code {process.returncode}\n\n"
+            yield f"data: [CONVERT][ERROR] Conversion failed with code {process.returncode}\n\n"
         else:
-            yield "data: [DONE]\n\n"
+            yield "data: [CONVERT][DONE] Finished with converting files to FLAC\n\n"
 
     return StreamingResponse(
         streamOutput(),
@@ -550,7 +550,7 @@ async def moveAlbum(body: ConvertRequest):
         try:
             folders = [f for f in Link.DOWNLOAD_DIR.iterdir() if f.is_dir()]
         except Exception as e:
-            yield f"data: [ERROR] Could not read download dir: {e}\n\n"
+            yield f"data: [MOVE][ERROR] Could not read download dir: {e}\n\n"
             return
 
         # 1. Try exact normalized match
@@ -571,7 +571,7 @@ async def moveAlbum(body: ConvertRequest):
                 yield f"data: [MOVE] Exact match failed, using most recently modified: {source.name}\n\n"
 
         if source is None:
-            yield f"data: [ERROR] No matching folder found for: {expected_name}\n\n"
+            yield f"data: [MOVE][ERROR] No matching folder found for: {expected_name}\n\n"
             return
 
         # Use the actual folder name for destination to preserve the renamed name
@@ -586,10 +586,10 @@ async def moveAlbum(body: ConvertRequest):
                 try:
                     shutil.rmtree(destination)
                 except Exception as e:
-                    yield f"data: [ERROR] Failed to remove existing: {e}\n\n"
+                    yield f"data: [MOVE][ERROR] Failed to remove existing: {e}\n\n"
                     return
             else:
-                yield f"data: [ERROR] Album already exists at {destination}\n\n"
+                yield f"data: [MOVE][ERROR] Album already exists at {destination}\n\n"
                 return
 
         max_retries = 5
@@ -601,7 +601,7 @@ async def moveAlbum(body: ConvertRequest):
                 shutil.move(str(source), str(destination))
                 yield f"data: [MOVE] Move completed!\n\n"
                 yield f"data: [MOVE] Final location: {destination}\n\n"
-                yield "data: [DONE]\n\n"
+                yield "data: [MOVE][DONE] Album moved successfully!\n\n"
                 return
 
             except PermissionError:
@@ -609,12 +609,12 @@ async def moveAlbum(body: ConvertRequest):
                     yield f"data: [MOVE] Access denied (OneDrive may be syncing), retrying in {retry_delay}s...\n\n"
                     time.sleep(retry_delay)
                 else:
-                    yield f"data: [ERROR] Permission denied after {max_retries} attempts. OneDrive may be locked.\n\n"
-                    yield f"data: [ERROR] Try pausing OneDrive sync or moving manually.\n\n"
+                    yield f"data: [MOVE][ERROR] Permission denied after {max_retries} attempts. OneDrive may be locked.\n\n"
+                    yield f"data: [MOVE][ERROR] Try pausing OneDrive sync or moving manually.\n\n"
                     return
 
             except Exception as e:
-                yield f"data: [ERROR] {str(e)}\n\n"
+                yield f"data: [MOVE][ERROR] {str(e)}\n\n"
                 return
 
     return StreamingResponse(
@@ -644,7 +644,7 @@ async def renameFolder(body: ConvertRequest):
             all_search_dirs.append(compilations_dir)
 
         if not all_search_dirs:
-            yield f"data: [ERROR] Artist directory not found: {artist_dir}\n\n"
+            yield f"data: [RENAME][ERROR] Artist directory not found: {artist_dir}\n\n"
             return
 
         # Collect all folders from both directories
@@ -654,11 +654,11 @@ async def renameFolder(body: ConvertRequest):
                 folders = [f for f in search_dir.iterdir() if f.is_dir()]
                 all_folders.extend(folders)
             except Exception as e:
-                yield f"data: [ERROR] Could not read {search_dir}: {e}\n\n"
+                yield f"data: [RENAME][ERROR] Could not read {search_dir}: {e}\n\n"
                 return
 
         if not all_folders:
-            yield f"data: [ERROR] No album folders found\n\n"
+            yield f"data: [RENAME][ERROR] No album folders found\n\n"
             return
 
         # Try to find matching folder
@@ -703,20 +703,20 @@ async def renameFolder(body: ConvertRequest):
                 except Exception:
                     pass
 
-                yield f"data: [RENAME] Done: {new_folder_name.name}\n\n"
-                yield "data: [DONE]\n\n"
+                yield f"data: [RENAME] Album has been renamed to : {new_folder_name.name}\n\n"
+                yield "data: [RENAME][DONE]\n\n"
                 return
 
             except PermissionError:
                 if attempt < max_retries - 1:
-                    yield f"data: [RENAME] File locked (attempt {attempt + 1}/{max_retries}), retrying in 2s...\n\n"
+                    yield f"data: [RENAME][ERROR] File locked (attempt {attempt + 1}/{max_retries}), retrying in 2s...\n\n"
                     await asyncio.sleep(2)
                 else:
-                    yield f"data: [ERROR] Permission denied after {max_retries} attempts. Close file explorer and try again.\n\n"
+                    yield f"data: [RENAME][ERROR] Permission denied after {max_retries} attempts. Close file explorer and try again.\n\n"
                     return
 
             except Exception as e:
-                yield f"data: [ERROR] {type(e).__name__}: {str(e)}\n\n"
+                yield f"data: [RENAME][ERROR] {type(e).__name__}: {str(e)}\n\n"
                 return
 
     return StreamingResponse(

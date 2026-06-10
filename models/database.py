@@ -156,7 +156,7 @@ def initial_admin_user():
 
     if admin_count == 0:
         # Create default admin user
-        create_user("admin", "changeme123", is_admin=True)
-        print("[INFO] Default admin user created: admin / changeme123")
+        create_user(Token.ADMIN_USERNAME, Token.ADMIN_PASSWORD, is_admin=True)
+        print("[INFO] Default admin user created")
     else:
         print("[INFO] Admin user already exists")
