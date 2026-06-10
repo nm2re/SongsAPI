@@ -1,5 +1,6 @@
 import asyncio
 import queue
+import re
 import shutil
 import threading
 import time
@@ -339,9 +340,8 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         print(f"[gamdl exited with code {process.returncode}]\n\n")
 
         if process.returncode == 0:
-
             folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
-            update_year(folder, match["year"])
+            update_year(match["artist"], match["album_name"], match["year"])
             yield "data: [METADATA] Year Updated!\n\n"
             yield "data: [DONE]\n\n"
         else:
@@ -352,23 +352,67 @@ class MetadataRequest(BaseModel):
     folder: str
     year: str
 
-def update_year(folder: str, year: str):
-    folder = Path(folder)
-    if not folder.exists():
-        raise HTTPException(status_code=404, detail="Folder not found")
+def update_year(artist: str, album_name: str, year: str):
+    """
+    Updates the year metadata on all audio files in the album folder.
+    Finds the folder by matching against the album name, or uses most recently modified.
+    """
+    artist_dir = Link.DOWNLOAD_DIR / artist
+
+    if not artist_dir.exists():
+        print(f"[update_year] Artist directory not found: {artist_dir}")
+        return []
+
+    # Try to find exact or close match first
+    try:
+        folders = [f for f in artist_dir.iterdir() if f.is_dir()]
+    except Exception as e:
+        print(f"[update_year] Error reading directory: {e}")
+        return []
+
+    if not folders:
+        print(f"[update_year] No album folder found in {artist_dir}")
+        return []
+
+    # Look for album name match (exact or with _ substitutions)
+    sanitized_album = album_name.replace(":", "_").replace("?", "_").replace("|", "_").replace('"', "_").replace("<", "_").replace(">", "_").replace("*", "_")
+
+    folder = None
+    for f in folders:
+        if sanitized_album in f.name or f.name.startswith(album_name):
+            folder = f
+            break
+
+    # If no match found, use most recently modified folder
+    if not folder:
+        folder = max(folders, key=lambda f: f.stat().st_mtime)
+        print(f"[update_year] Album name not found, using most recently modified: {folder.name}")
+    else:
+        print(f"[update_year] Found matching folder: {folder.name}")
 
     changed = []
-    for file in folder.rglob("*"):
-        if file.suffix.lower() == ".flac":
-            audio = FLAC(file)
-            audio.save()
-            changed.append(file.name)
+    try:
+        for file in folder.rglob("*"):
+            if file.suffix.lower() == ".flac":
+                try:
+                    audio = FLAC(file)
+                    audio["\xa9day"] = [year]
+                    audio.save()
+                    changed.append(file.name)
+                except Exception as e:
+                    print(f"[update_year] Error updating FLAC {file.name}: {e}")
 
-        elif file.suffix.lower() == ".m4a":
-            audio = MP4(file)
-            audio["\xa9day"] = [year]
-            audio.save()
-            changed.append(file.name)
+            elif file.suffix.lower() == ".m4a":
+                try:
+                    audio = MP4(file)
+                    audio["\xa9day"] = [year]
+                    audio.save()
+                    changed.append(file.name)
+                except Exception as e:
+                    print(f"[update_year] Error updating M4A {file.name}: {e}")
+    except Exception as e:
+        print(f"[update_year] Error processing files: {e}")
+
     return changed
 
 @app.post("/albums/metadata/year")
@@ -393,18 +437,46 @@ class ConvertRequest(BaseModel): # a structure to help write the functions based
     overwrite: bool = False # option to overwrite existing flac files, default is false to prevent accidental overwriting
 
 
+def normalize_name(name: str) -> str:
+    """Replace any non-alphanumeric characters (except spaces) with underscores, collapse multiples"""
+    return re.sub(r'[^a-z0-9 ]+', '_', name.lower()).strip()
 
 @app.post("/albums/convert-flac")
 async def convertToFLAC(body: ConvertRequest):
-    """
-    Converts all .m4a files in the album folder to .flac using ffmpeg via PowerShell script.
-    Streams progress back to the client as SSE.
-    """
-
-    folder = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
+    expected_name = f"{body.artist} - {body.album_name}"
+    normalized_expected = normalize_name(expected_name)
     script_path = Link.DOWNLOAD_DIR / Link.CONVERT_TO_FLAC
 
     async def streamOutput():
+        try:
+            folders = [f for f in Link.DOWNLOAD_DIR.iterdir() if f.is_dir()]
+        except Exception as e:
+            yield f"data: [ERROR] Could not read download dir: {e}\n\n"
+            return
+
+        # 1. Try exact normalized match
+        folder = next(
+            (f for f in folders if normalize_name(f.name) == normalized_expected),
+            None
+        )
+
+        # 2. Fallback: find folders starting with the artist name, pick most recently modified
+        if folder is None:
+            normalized_artist = normalize_name(body.artist)
+            artist_folders = [
+                f for f in folders
+                if normalize_name(f.name).startswith(normalized_artist)
+            ]
+            if artist_folders:
+                folder = max(artist_folders, key=lambda f: f.stat().st_mtime)
+                yield f"data: [CONVERT] Exact match failed, using most recently modified: {folder.name}\n\n"
+
+        if folder is None:
+            yield f"data: [ERROR] No matching folder found for: {expected_name}\n\n"
+            return
+
+        yield f"data: [CONVERT] Matched folder: {folder.name}\n\n"
+
         loop = asyncio.get_event_loop()
         q = asyncio.Queue()
 
@@ -452,19 +524,42 @@ async def convertToFLAC(body: ConvertRequest):
 
 @app.post("/albums/move-album")
 async def moveAlbum(body: ConvertRequest):
-    source = Link.DOWNLOAD_DIR / f"{body.artist} - {body.album_name}"
-    destination = Link.DESTINATION_DIR / f"{body.artist} - {body.album_name}"
+    expected_name = f"{body.artist} - {body.album_name}"
+    normalized_expected = normalize_name(expected_name)
 
     async def streamOutput():
-        yield f"data: [MOVE] Source: {source}\n\n"
-        yield f"data: [MOVE] Destination: {destination}\n\n"
-        yield f"data: [MOVE] Source exists: {source.exists()}\n\n"
-
-        if not source.exists():
-            yield f"data: [ERROR] Album not found at {source}\n\n"
+        try:
+            folders = [f for f in Link.DOWNLOAD_DIR.iterdir() if f.is_dir()]
+        except Exception as e:
+            yield f"data: [ERROR] Could not read download dir: {e}\n\n"
             return
 
-        yield f"data: [MOVE] Destination exists: {destination.exists()}\n\n"
+        # 1. Try exact normalized match
+        source = next(
+            (f for f in folders if normalize_name(f.name) == normalized_expected),
+            None
+        )
+
+        # 2. Fallback: artist prefix + most recently modified
+        if source is None:
+            normalized_artist = normalize_name(body.artist)
+            artist_folders = [
+                f for f in folders
+                if normalize_name(f.name).startswith(normalized_artist)
+            ]
+            if artist_folders:
+                source = max(artist_folders, key=lambda f: f.stat().st_mtime)
+                yield f"data: [MOVE] Exact match failed, using most recently modified: {source.name}\n\n"
+
+        if source is None:
+            yield f"data: [ERROR] No matching folder found for: {expected_name}\n\n"
+            return
+
+        # Use the actual folder name for destination to preserve the renamed name
+        destination = Link.DESTINATION_DIR / source.name
+
+        yield f"data: [MOVE] Source: {source}\n\n"
+        yield f"data: [MOVE] Destination: {destination}\n\n"
 
         if destination.exists():
             if body.overwrite:
@@ -478,20 +573,19 @@ async def moveAlbum(body: ConvertRequest):
                 yield f"data: [ERROR] Album already exists at {destination}\n\n"
                 return
 
-        # Retry logic — OneDrive locks folders while syncing
         max_retries = 5
-        retry_delay = 2  # seconds
+        retry_delay = 2
 
         for attempt in range(max_retries):
             try:
                 yield f"data: [MOVE] Attempt {attempt + 1}/{max_retries}: Moving {source.name}...\n\n"
-                shutil.move(str(source), str(Link.DESTINATION_DIR))
+                shutil.move(str(source), str(destination))
                 yield f"data: [MOVE] Move completed!\n\n"
                 yield f"data: [MOVE] Final location: {destination}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
-            except PermissionError as e:
+            except PermissionError:
                 if attempt < max_retries - 1:
                     yield f"data: [MOVE] Access denied (OneDrive may be syncing), retrying in {retry_delay}s...\n\n"
                     time.sleep(retry_delay)
@@ -512,66 +606,71 @@ async def moveAlbum(body: ConvertRequest):
 
 
 @app.post('/albums/rename-folder')
-@app.post('/albums/rename-folder')
 async def renameFolder(body: ConvertRequest):
+    new_artist = body.new_artist or body.artist
+    new_album = body.new_album_name or body.album_name
     artist_dir = Link.DOWNLOAD_DIR / body.artist
-    new_artist = body.new_artist if hasattr(body, 'new_artist') and body.new_artist else body.artist
-    new_album = body.new_album_name if hasattr(body, 'new_album_name') and body.new_album_name else body.album_name
-    new_album_name = Link.DOWNLOAD_DIR / f"{new_artist} - {new_album}"
+    new_folder_name = Link.DOWNLOAD_DIR / f"{new_artist} - {new_album}"
+    normalized_album = normalize_name(body.album_name)
 
     async def streamOutput():
-        yield f"data: [RENAME] Artist dir: {artist_dir}\n\n"
-        yield f"data: [RENAME] New target: {new_album_name}\n\n"
-
         if not artist_dir.exists():
             yield f"data: [ERROR] Artist directory not found: {artist_dir}\n\n"
             return
 
         try:
             folders = [f for f in artist_dir.iterdir() if f.is_dir()]
-            yield f"data: [RENAME] Found {len(folders)} folder(s) in {artist_dir.name}\n\n"
-
-            if not folders:
-                yield f"data: [ERROR] No album folder found in {artist_dir}\n\n"
-                return
-
-            old_album_location = folders[0]
-            yield f"data: [RENAME] Old location: {old_album_location}\n\n"
-
         except Exception as e:
             yield f"data: [ERROR] Could not read directory: {e}\n\n"
             return
 
-        # Retry logic for Windows file locking
+        source = next(
+            (f for f in folders if normalize_name(f.name) == normalized_album),
+            None
+        )
+
+        # Fallback: already partially renamed, try matching new name too
+        if source is None:
+            source = next(
+                (f for f in folders if normalize_name(f.name) == normalize_name(new_album)),
+                None
+            )
+
+        if source is None:
+            yield f"data: [ERROR] No matching folder found for: {body.album_name}\n\n"
+            return
+
+        yield f"data: [RENAME] Found: {source.name}\n\n"
+        yield f"data: [RENAME] Renaming to: {new_folder_name.name}\n\n"
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                yield f"data: [RENAME] Attempt {attempt + 1}: Moving {old_album_location.name}...\n\n"
-                shutil.move(str(old_album_location), str(new_album_name))
-                yield f"data: [RENAME] Successfully moved to: {new_album_name.name}\n\n"
+                yield f"data: [RENAME] Attempt {attempt + 1}: Renaming...\n\n"
+                shutil.move(str(source), str(new_folder_name))
 
                 # Clean up empty artist directory
-                if artist_dir.exists() and artist_dir.is_dir():
-                    try:
-                        if not any(artist_dir.iterdir()):
-                            artist_dir.rmdir()
-                            yield f"data: [RENAME] Removed empty artist directory\n\n"
-                    except:
-                        pass
+                try:
+                    if artist_dir.exists() and not any(artist_dir.iterdir()):
+                        artist_dir.rmdir()
+                        yield f"data: [RENAME] Removed empty artist directory\n\n"
+                except Exception:
+                    pass
 
+                yield f"data: [RENAME] Done: {new_folder_name.name}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
-            except PermissionError as e:
+            except PermissionError:
                 if attempt < max_retries - 1:
                     yield f"data: [RENAME] File locked, retrying in 1s...\n\n"
                     await asyncio.sleep(1)
                 else:
-                    yield f"data: [ERROR] Permission denied (files may be in use). Try closing any file explorer windows.\n\n"
+                    yield f"data: [ERROR] Permission denied. Try closing any file explorer windows.\n\n"
                     return
 
             except Exception as e:
-                yield f"data: [ERROR] Failed: {type(e).__name__}: {str(e)}\n\n"
+                yield f"data: [ERROR] {type(e).__name__}: {str(e)}\n\n"
                 return
 
     return StreamingResponse(

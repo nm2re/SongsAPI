@@ -1279,10 +1279,16 @@
 
     async function moveAlbum(artist, albumName, collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox   = document.getElementById(`log-${collectionId}`);
         const overwrite = document.getElementById(`overwrite-${collectionId}`).checked;
 
         statusEl.className = "status-tag moving";
         statusEl.textContent = "Moving...";
+
+        if (currentDownloads[collectionId]) {
+            currentDownloads[collectionId].status = "moving";
+            updateDownloadsPanel();
+        }
 
         const response = await fetch("http://localhost:8000/albums/move-album", {
             method: "POST",
@@ -1306,12 +1312,60 @@
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
                     statusEl.textContent = "✓ Moved";
+
+                    // Remove from active downloads, add to completed in panel
+                    if (currentDownloads[collectionId]) {
+                        const dl = currentDownloads[collectionId];
+                        delete currentDownloads[collectionId];
+
+                        const list = document.getElementById("downloadsList");
+                        const completed = document.createElement("div");
+                        completed.className = "download-item";
+                        completed.innerHTML = `
+                        <div class="download-item-title">${dl.albumName}</div>
+                        <div class="download-item-artist">${dl.artist}</div>
+                        <div class="download-item-progress" style="color: var(--green);">✓ MOVED TO VAULT</div>
+                    `;
+                        // Prepend so it appears at the top
+                        list.insertBefore(completed, list.firstChild);
+                        document.getElementById("downloadCount").textContent = Object.keys(currentDownloads).length;
+                    }
+
+                    // Remove the items from the pinned section
+                    const pinnedCard = document.querySelector(`#pinnedDownloads #album-${collectionId}`);
+                    if (pinnedCard) pinnedCard.remove();
+
+                    pinnedAlbums.delete(collectionId);
+                    delete pinnedAlbumsDetails[collectionId];
+                    delete downloadLogs[collectionId];
+
+                    if (pinnedAlbums.size === 0) {
+                        document.getElementById("pinnedSection").style.display = "none";
+                    }
+                    document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+
+                    if (logBox) {
+                        logBox.textContent += "[MOVE] Complete\n";
+                        downloadLogs[collectionId] = logBox.textContent;
+                    }
+                    saveState();
                     return;
                 }
 
                 if (content.startsWith("[ERROR]")) {
                     statusEl.className = "status-tag error";
                     statusEl.textContent = "✗ Error";
+
+                    if (currentDownloads[collectionId]) {
+                        currentDownloads[collectionId].status = "error";
+                        updateDownloadsPanel();
+                    }
+
+                    if (logBox) {
+                        logBox.textContent += content + "\n";
+                        downloadLogs[collectionId] = logBox.textContent;
+                    }
+                    saveState();
                     return;
                 }
             }
@@ -1388,7 +1442,32 @@
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
                     statusEl.textContent = "✓ Renamed";
-                    // ... update card
+
+                    // Update the card's button onclick attributes with the new names
+                    const card = document.getElementById(`album-${collectionId}`);
+                    if (card) {
+                        const escaped = (s) => s.replace(/'/g, "\\'");
+
+                        card.querySelector('.btn-convert').setAttribute('onclick',
+                            `convertAlbum('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`);
+                        card.querySelector('.btn-move').setAttribute('onclick',
+                            `moveAlbum('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`);
+                        card.querySelector('.btn-rename').setAttribute('onclick',
+                            `openRenameModal('${escaped(newArtist)}', '${escaped(newAlbum)}', ${collectionId})`);
+
+                        // Update the displayed name and artist
+                        card.querySelector('.album-name').textContent = newAlbum;
+                        card.querySelector('.album-meta').innerHTML = `${newArtist} <span class="album-year">${card.querySelector('.album-year')?.textContent || ''}</span>`;
+                    }
+
+                    // Update pinnedAlbumsDetails so it persists correctly
+                    if (pinnedAlbumsDetails[collectionId]) {
+                        pinnedAlbumsDetails[collectionId].artist = newArtist;
+                        pinnedAlbumsDetails[collectionId].album_name = newAlbum;
+                    }
+
+                    saveState();
+                    renameTarget = null;
                     return;
                 }
 
