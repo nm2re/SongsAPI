@@ -1418,73 +1418,6 @@
         renameTarget = null;
     }
 
-    async function renameAlbumDirect(artist, albumName, collectionId) {
-        // Renames album without showing modal - used by UPLOAD function
-        const statusEl = document.getElementById(`status-${collectionId}`);
-        const logBox = document.getElementById(`log-${collectionId}`);
-
-        logBox.style.display = "block";
-        logBox.textContent += "\n[RENAME] Renaming folder...\n";
-        downloadLogs[collectionId] = logBox.textContent;
-
-        statusEl.className = "status-tag moving";
-        statusEl.textContent = "Renaming...";
-
-        const response = await fetch("http://localhost:8000/albums/rename-folder", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-                artist: artist,
-                album_name: albumName,
-                new_artist: artist,
-                new_album_name: albumName
-            })
-        });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        return new Promise((resolve, reject) => {
-            (async () => {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value);
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop() || "";
-
-                    for (const line of lines) {
-                        if (!line.trim().startsWith("data: ")) continue;
-
-                        const content = line.replace("data: ", "").trim();
-                        if (!content) continue;
-
-                        logBox.textContent += content + "\n";
-                        downloadLogs[collectionId] = logBox.textContent;
-                        logBox.scrollTop = logBox.scrollHeight;
-
-                        if (content === "[DONE]") {
-                            statusEl.className = "status-tag done";
-                            statusEl.textContent = "✓ Renamed";
-                            resolve();
-                            return;
-                        }
-
-                        if (content.startsWith("[ERROR]")) {
-                            statusEl.className = "status-tag error";
-                            statusEl.textContent = "✗ Error";
-                            reject(new Error(content));
-                            return;
-                        }
-                    }
-                }
-            })();
-        });
-    }
-
 
     // Close modal on Escape
     document.addEventListener("keydown", (e) => {
@@ -1615,7 +1548,7 @@
                             const content = trimmed.replace("data: ", "").trim();
                             if (!content) continue;
 
-                            if (content === "[DONE]") {
+                            if (content === "[ALBUM DOWNLOAD][DONE]") {
                                 updateDownloadStatus(collectionId, "done");
                                 resolve();
                                 return;
@@ -1638,59 +1571,68 @@
         });
     }
 
-    async function renameAlbumStep(collectionId, artist, albumName) {
+    async function renameAlbumDirect(artist, albumName, collectionId) {
+        // Renames album without showing modal - used by UPLOAD function
+        const statusEl = document.getElementById(`status-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
+
+        logBox.style.display = "block";
+        logBox.textContent += "\n[RENAME] Renaming folder...\n";
+        downloadLogs[collectionId] = logBox.textContent;
+
+        statusEl.className = "status-tag moving";
+        statusEl.textContent = "Renaming...";
+
+        const response = await fetch("http://localhost:8000/albums/rename-folder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+                artist: artist,
+                album_name: albumName,
+                new_artist: artist,
+                new_album_name: albumName
+            })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
         return new Promise((resolve, reject) => {
-            const logBox = document.getElementById(`log-${collectionId}`);
-
             (async () => {
-                try {
-                    const response = await fetch("http://localhost:8000/albums/rename-folder", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        credentials: "include",
-                        body: JSON.stringify({
-                            artist: artist,
-                            album_name: albumName,
-                            new_artist: artist,
-                            new_album_name: albumName
-                        })
-                    });
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = "";
+                    buffer += decoder.decode(value);
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop() || "";
 
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
+                    for (const line of lines) {
+                        if (!line.trim().startsWith("data: ")) continue;
 
-                        buffer += decoder.decode(value);
-                        const lines = buffer.split("\n");
-                        buffer = lines.pop() || "";
+                        const content = line.replace("data: ", "").trim();
+                        if (!content) continue;
 
-                        for (const line of lines) {
-                            if (!line.trim().startsWith("data: ")) continue;
+                        logBox.textContent += content + "\n";
+                        downloadLogs[collectionId] = logBox.textContent;
+                        logBox.scrollTop = logBox.scrollHeight;
 
-                            const content = line.replace("data: ", "").trim();
-                            if (!content) continue;
+                        if (content === "[RENAME][DONE]") {
+                            statusEl.className = "status-tag done";
+                            statusEl.textContent = "✓ Renamed";
+                            resolve();
+                            return;
+                        }
 
-                            if (content === "[DONE]") {
-                                resolve();
-                                return;
-                            }
-
-                            if (content.startsWith("[ERROR]")) {
-                                reject(new Error(content));
-                                return;
-                            }
-
-                            logBox.textContent += content + "\n";
-                            downloadLogs[collectionId] = logBox.textContent;
-                            logBox.scrollTop = logBox.scrollHeight;
+                        if (content.startsWith("[ERROR]")) {
+                            statusEl.className = "status-tag error";
+                            statusEl.textContent = "✗ Error";
+                            reject(new Error(content));
+                            return;
                         }
                     }
-                } catch (err) {
-                    reject(err);
                 }
             })();
         });
@@ -1727,7 +1669,7 @@
                             const content = line.replace("data: ", "").trim();
                             if (!content) continue;
 
-                            if (content === "[DONE]") {
+                            if (content === "[CONVERT][DONE] Finished with converting files to FLAC") {
                                 resolve();
                                 return;
                             }
@@ -1780,7 +1722,27 @@
                             const content = line.replace("data: ", "").trim();
                             if (!content) continue;
 
-                            if (content === "[DONE]") {
+                            if (content === "[MOVE][DONE] Album moved successfully!") {
+                                // Removing completed items from pinned
+                                pinnedAlbums.delete(collectionId);
+                                delete pinnedAlbumsDetails[collectionId];
+                                delete downloadLogs[collectionId];
+
+                                // Remove card from pinned section
+                                const card = document.getElementById(`album-${collectionId}`);
+                                if (card) {
+                                    card.remove();
+                                }
+
+                                // Update pinned count
+                                const pinnedSection = document.getElementById("pinnedSection");
+                                if (pinnedAlbums.size > 0) {
+                                    document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+                                } else {
+                                    pinnedSection.style.display = "none";
+                                }
+
+                                saveState();
                                 resolve();
                                 return;
                             }
