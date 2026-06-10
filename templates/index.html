@@ -710,21 +710,27 @@
             startTime: new Date()
         };
         console.log("Added to downloads:", collectionId, currentDownloads);
+
+        // local storage persistence
+
+        localStorage.setItem('currentDownloads', JSON.stringify(currentDownloads));
         updateDownloadsPanel();
     }
 
     function updateDownloadStatus(collectionId, status) {
         if (currentDownloads[collectionId]) {
             currentDownloads[collectionId].status = status;
+
+            localStorage.setItem('currentDownloads', JSON.stringify(currentDownloads));
             updateDownloadsPanel();
 
             // Only remove completed items after a delay
-            if (status === "done" || status === "error") {
-                setTimeout(() => {
-                    delete currentDownloads[collectionId];
-                    updateDownloadsPanel();
-                }, 5000); // Show for 5 seconds after completion
-            }
+            // if (status === "done" || status === "error") {
+            //     setTimeout(() => {
+            //         delete currentDownloads[collectionId];
+            //         updateDownloadsPanel();
+            //     }, 5000); // Show for 5 seconds after completion
+            // }
         }
     }
 
@@ -765,6 +771,15 @@
             </div>
         `;
         }).join("");
+    }
+
+    function restoreDownloads() {
+        const saved = localStorage.getItem('currentDownloads');
+
+        if (saved) {
+            currentDownloads = JSON.parse(saved)
+            updateDownloadsPanel()
+        }
     }
 
     async function logout() {
@@ -1197,11 +1212,6 @@
         }
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
-        checkAdmin()
-        restoreState()
-    });
-
     async function moveAlbum(artist, albumName, collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
         const logBox   = document.getElementById(`log-${collectionId}`);
@@ -1241,7 +1251,7 @@
                     // Remove from active downloads, add to completed in panel
                     if (currentDownloads[collectionId]) {
                         const dl = currentDownloads[collectionId];
-                        delete currentDownloads[collectionId];
+                        // delete currentDownloads[collectionId];
 
                         const list = document.getElementById("downloadsList");
                         const completed = document.createElement("div");
@@ -1440,6 +1450,9 @@
             console.error("Album not found:", collectionId);
             return;
         }
+
+        pinAlbum(collectionId, album);
+        addDownload(collectionId, album.album_name, album.artist);
 
         const statusEl = document.getElementById(`status-${collectionId}`);
         const logBox = document.getElementById(`log-${collectionId}`);
@@ -1691,9 +1704,84 @@
         });
     }
 
+    // async function moveAlbumStep(collectionId, artist, albumName, overwrite) {
+    //     return new Promise((resolve, reject) => {
+    //         const logBox = document.getElementById(`log-${collectionId}`);
+    //
+    //         (async () => {
+    //             try {
+    //                 const response = await fetch("http://localhost:8000/albums/move-album", {
+    //                     method: "POST",
+    //                     headers: { "Content-Type": "application/json" },
+    //                     credentials: "include",
+    //                     body: JSON.stringify({ artist, album_name: albumName, overwrite })
+    //                 });
+    //
+    //                 const reader = response.body.getReader();
+    //                 const decoder = new TextDecoder();
+    //                 let buffer = "";
+    //
+    //                 while (true) {
+    //                     const { done, value } = await reader.read();
+    //                     if (done) break;
+    //
+    //                     buffer += decoder.decode(value);
+    //                     const lines = buffer.split("\n");
+    //                     buffer = lines.pop() || "";
+    //
+    //                     for (const line of lines) {
+    //                         if (!line.trim().startsWith("data: ")) continue;
+    //
+    //                         const content = line.replace("data: ", "").trim();
+    //                         if (!content) continue;
+    //
+    //                         if (content === "[MOVE][DONE] Album moved successfully!") {
+    //                             // Removing completed items from pinned
+    //                             pinnedAlbums.delete(collectionId);
+    //                             delete pinnedAlbumsDetails[collectionId];
+    //                             delete downloadLogs[collectionId];
+    //
+    //                             // Remove card from pinned section
+    //                             const card = document.getElementById(`album-${collectionId}`);
+    //                             // if (card) {
+    //                             //     card.remove();
+    //                             // }
+    //
+    //                             // Update pinned count
+    //                             const pinnedSection = document.getElementById("pinnedSection");
+    //                             if (pinnedAlbums.size > 0) {
+    //                                 document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+    //                             } else {
+    //                                 pinnedSection.style.display = "none";
+    //                             }
+    //
+    //                             saveState();
+    //                             resolve();
+    //                             return;
+    //                         }
+    //
+    //                         if (content.startsWith("[ERROR]")) {
+    //                             reject(new Error(content));
+    //                             return;
+    //                         }
+    //
+    //                         logBox.textContent += content + "\n";
+    //                         downloadLogs[collectionId] = logBox.textContent;
+    //                         logBox.scrollTop = logBox.scrollHeight;
+    //                     }
+    //                 }
+    //             } catch (err) {
+    //                 reject(err);
+    //             }
+    //         })();
+    //     });
+    // }
+
+
     async function moveAlbumStep(collectionId, artist, albumName, overwrite) {
         return new Promise((resolve, reject) => {
             const logBox = document.getElementById(`log-${collectionId}`);
+            const statusEl = document.getElementById(`status-${collectionId}`);
 
             (async () => {
                 try {
@@ -1723,7 +1811,12 @@
                             if (!content) continue;
 
                             if (content === "[MOVE][DONE] Album moved successfully!") {
-                                // Removing completed items from pinned
+                                // Update status in sidebar to Done
+                                statusEl.className = "status-tag done";
+                                statusEl.textContent = "✓ Done";
+                                updateDownloadStatus(collectionId, "done");
+
+                                // Remove from main pinned section (cleanup)
                                 pinnedAlbums.delete(collectionId);
                                 delete pinnedAlbumsDetails[collectionId];
                                 delete downloadLogs[collectionId];
@@ -1748,6 +1841,9 @@
                             }
 
                             if (content.startsWith("[ERROR]")) {
+                                statusEl.className = "status-tag error";
+                                statusEl.textContent = "✗ Error";
+                                updateDownloadStatus(collectionId, "error");
                                 reject(new Error(content));
                                 return;
                             }
@@ -1763,6 +1859,13 @@
             })();
         });
     }
+
+
+    document.addEventListener("DOMContentLoaded", () => {
+        checkAdmin();
+        restoreDownloads();
+        restoreState();
+    });
 </script>
 
 </body>
