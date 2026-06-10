@@ -340,19 +340,28 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         print(f"[gamdl exited with code {process.returncode}]\n\n")
 
         if process.returncode == 0:
-            folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
-            update_year(match["artist"], match["album_name"], match["year"])
-            yield "data: [METADATA][UPDATE YEAR] Year Updated!\n\n"
-            yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
+            # folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
+            try:
+                yield "data: [METADATA] Updating Year Metadata.../n/n"
+
+                # Running the update_year in a thread pool to avoid blocking the main event loop
+                async for log_message in update_year(match["artist"], match["album_name"], match["year"]):
+                    yield f"data: {log_message}\n\n"
+                yield "data: [METADATA][UPDATE YEAR] Year Updated!\n\n"
+                yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
+
+            except Exception as e:
+                print(f"[ERROR] Metadata update failed: {e}")
+                yield f"data: [WARNING] Metadata update failed: {str(e)}\n\n"
         else:
             yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
-    return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}) #
+    return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 class MetadataRequest(BaseModel):
     folder: str
     year: str
 
-def update_year(artist: str, album_name: str, year: str):
+async def update_year(artist: str, album_name: str, year: str):
     """
     Updates the year metadata on all audio files in the album folder.
     Finds the folder by matching against the album name, or uses most recently modified.
@@ -370,8 +379,9 @@ def update_year(artist: str, album_name: str, year: str):
         all_search_dirs.append(compilations_dir)
 
     if not all_search_dirs:
-        print(f"[UPDATE_YEAR] Neither Artist directory nor Compilations folder found: {artist_dir}, {compilations_dir}")
-        return []
+        yield "[UPDATE_YEAR] Artist directory not found\n\n"
+        # print(f"[UPDATE_YEAR] Neither Artist directory nor Compilations folder found: {artist_dir}, {compilations_dir}")
+
 
     # Try to find exact or close match first
 
@@ -381,22 +391,19 @@ def update_year(artist: str, album_name: str, year: str):
             folders = [f for f in search_dir.iterdir() if f.is_dir()]
             all_folders.extend(folders)
         except Exception as e:
-            print(f"[UPDATE_YEAR] Error reading directory: {search_dir}: {e}")
-            return []
+            yield f"[UPDATE_YEAR] Error reading directory: {search_dir}: {e}"
+            # print(f"[UPDATE_YEAR] Error reading directory: {search_dir}: {e}")
+
 
     if not all_folders:
+        yield "[UPDATE_YEAR] No folders found"
         print(f"[UPDATE_YEAR] No album folder found")
-        return []
+
 
     # Look for album name match (exact or with _ substitutions)
     sanitized_album = album_name.replace(":", "_").replace("?", "_").replace("|", "_").replace('"', "_").replace("<", "_").replace(">", "_").replace("*", "_")
 
     folder = None
-    # for f in all_folders:
-    #     if sanitized_album in f.name or f.name.startswith(album_name):
-    #         folder = f
-    #         break
-
     for f in all_folders:
         if sanitized_album in f.name or album_name in f.name:
             folder = f
@@ -405,47 +412,72 @@ def update_year(artist: str, album_name: str, year: str):
     # If no match found, use most recently modified folder
     if not folder:
         folder = max(all_folders, key=lambda f: f.stat().st_mtime)
+        yield f"[UPDATE_YEAR] Using most recent: {folder.name}"
         print(f"[UPDATE_YEAR] Album name not found, using most recently modified: {folder.name}")
     else:
-        print(f"[UPDATE_YEAR] Found matching folder: {folder.name}")
+        yield f"[UPDATE_YEAR] Found: {folder.name}"
+        # print(f"[UPDATE_YEAR] Found matching folder: {folder.name}")
 
     changed = []
+    file_count = 0
     try:
         for file in folder.rglob("*"):
-            if file.suffix.lower() == ".flac":
-                try:
-                    audio = FLAC(file)
-                    audio["\xa9day"] = [year]
-                    audio.save()
-                    changed.append(file.name)
-                except Exception as e:
-                    print(f"[UPDATE_YEAR] Error updating FLAC {file.name}: {e}")
+            if file.suffix.lower() in [".flac", ".m4a"]:
+                file_count += 1
+                yield f"[UPDATE_YEAR] Processing {file.name}"
 
-            elif file.suffix.lower() == ".m4a":
                 try:
-                    audio = MP4(file)
-                    audio["\xa9day"] = [year]
-                    audio.save()
+                    if file.suffix.lower() == ".flac":
+                        audio = FLAC(file)
+                        audio["\xa9day"] = [year]
+                        audio.save()
+                    else:
+                        audio = MP4(file)
+                        audio["\xa9day"] = [year]
+                        audio.save()
+
                     changed.append(file.name)
+                    yield f"[UPDATE_YEAR] ✓ Updated {file.name}"
                 except Exception as e:
-                    print(f"[UPDATE_YEAR] Error updating M4A {file.name}: {e}")
+                    yield f"[UPDATE_YEAR] ✗ Error on {file.name}: {e}"
+
+        yield f"[UPDATE_YEAR] Complete: {len(changed)}/{file_count} files updated"
     except Exception as e:
-        print(f"[UPDATE_YEAR] Error processing files: {e}")
+        yield f"[UPDATE_YEAR] Error: {e}"
 
-    return changed
 
 @app.post("/albums/metadata/year")
-def updateYear(body: MetadataRequest):
+async def updateYear(body: MetadataRequest):
     """
-    Keep Years in check for albums as they can cause issues when importing to music library, this is a temporary solution until I can find a better one,
-    maybe using the iTunes API to get the correct year and update the metadata of the files using mutagen or something like that.
+    Updates year metadata on audio files in a specific folder.
+    Streams progress via SSE.
     """
     folder = Path(body.folder)
     if not folder.exists():
         raise HTTPException(status_code=404, detail="Folder not found")
-    changed = update_year(str(folder), body.year)
 
-    return {"updated" : changed, "year" : body.year}
+    # Extract artist and album name from folder path
+    # Assumes folder structure: "Artist - Album Name"
+    folder_name = folder.name
+    artist = body.artist if hasattr(body, 'artist') else folder_name.split(" - ")[0]
+    album_name = body.album_name if hasattr(body, 'album_name') else folder_name.split(" - ")[1] if " - " in folder_name else folder_name
+
+    async def streamOutput():
+        yield "data: [METADATA] Starting year update...\n\n"
+
+        try:
+            async for log_message in update_year(artist, album_name, body.year):
+                yield f"data: {log_message}\n\n"
+
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return StreamingResponse(
+        streamOutput(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 class ConvertRequest(BaseModel): # a structure to help write the functions based on the artist and album name instead of the folder name which can be different based on the gamdl version and settings
