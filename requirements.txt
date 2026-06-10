@@ -1,0 +1,6 @@
+fastapi==0.136.3
+mutagen==1.47.0
+passlib==1.7.4
+pydantic==2.13.4
+Requests==2.34.2
+starlette==1.2.1

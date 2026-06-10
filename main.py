@@ -23,7 +23,7 @@ from models.database import *
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=Token.SECRET_KEY)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "https://blvaine.ddns.net/songs-api"], allow_methods=["*"],allow_headers=["*"], allow_credentials=True,)  # Replace Allow origins with proper url later when deploying
+app.add_middleware(CORSMiddleware, allow_origins=[Link.LOCALHOST_URL, Link.PUBLIC_URL], allow_methods=["*"],allow_headers=["*"], allow_credentials=True,)
 
 Link.setup() # setup .mkdir() function
 
@@ -35,44 +35,47 @@ except Exception as e:
     print(f"[ERROR] Database initialization failed: {e}")
 
 
+
+# --------------------- PAGES ---------------------
 @app.get("/")
 async def index(request: Request):
     """
     This is where the website search index will be, for now it just serves the index.html
     file which will be used for testing the frontend and backend connection.
     """
-    if "user" not in request.session:
-        return RedirectResponse(url="/login", status_code=302)
+    if "user" not in request.session: return RedirectResponse(url="/login", status_code=302)
     return FileResponse("templates/index.html")
-
-# -------------------- ADMIN API --------------------
 
 @app.get("/login")
 async def login_page():
+    """
+    Login Page Rendering
+    """
     return FileResponse("templates/login.html")
 
+@app.get("/admin")
+async def admin_page(request: Request):
+    if not request.session.get("is_admin"): return RedirectResponse(url="/login", status_code=302)
+    return FileResponse("templates/admin.html")
+
+
+# --------------------- AUTH ENDPOINTS ---------------------
 @app.post("/api/login")
 async def login(request: Request):
     data = await request.json()
     username = data.get("username")
     password = data.get("password")
 
-    print(f"[LOGIN] Attempt with username: {username}")
-    print(f"[LOGIN] Password entered: {password}")
-
     if not username or not password:
         raise HTTPException(status_code=400, detail="Missing credentials")
 
     user = get_user(username)
-    print(f"[LOGIN] User from database: {user}")
-
     if not user:
         print(f"[LOGIN] User not found!")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     is_correct = check_password(password, user["hashed_password"])
     print(f"[LOGIN] Password check result: {is_correct}")
-    print(f"[LOGIN] Hashed password from DB starts with: {user['hashed_password'][:30]}...")
 
     if not is_correct:
         print(f"[LOGIN] Password verification failed!")
@@ -82,7 +85,6 @@ async def login(request: Request):
     request.session["user"] = username
     request.session["is_admin"] = user["is_admin"]
     return {"status": "success", "is_admin": user["is_admin"]}
-
 
 @app.get("/api/user-info")
 async def user_info(request: Request):
@@ -94,27 +96,14 @@ async def user_info(request: Request):
     is_user_admin = request.session.get("is_admin", False)
     return {"username": user, "is_admin": is_user_admin}
 
-
-@app.get("/admin")
-async def admin_page(request: Request):
-    if not request.session.get("is_admin"):
-        return RedirectResponse(url="/login", status_code=302)
-
-    return FileResponse("templates/admin.html")
-
-
 @app.get("/api/users")
 async def list_all_users(request: Request):
-    if not request.session.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
+    if not request.session.get("is_admin"): raise HTTPException(status_code=403, detail="Unauthorized")
     return {"users": list_users()}
-
 
 @app.post("/api/users/create")
 async def create_new_user(request: Request):
-    if not request.session.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+    if not request.session.get("is_admin"): raise HTTPException(status_code=403, detail="Unauthorized")
 
     data = await request.json()
     username = data.get("username", "").strip()
@@ -138,49 +127,40 @@ async def create_new_user(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/api/users/delete")
 async def delete_existing_user(request: Request):
-    if not request.session.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+    if not request.session.get("is_admin"): raise HTTPException(status_code=403, detail="Unauthorized")
 
     data = await request.json()
     username = data.get("username")
 
-    if not username:
-        raise HTTPException(status_code=400, detail="Username required")
-
-    if username == request.session.get("user"):
-        raise HTTPException(status_code=400, detail="Cannot delete your own account")
-
-    if not get_user(username):
-        raise HTTPException(status_code=404, detail="User not found")
+    if not username: raise HTTPException(status_code=400, detail="Username required")
+    if username == request.session.get("user"): raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    if not get_user(username): raise HTTPException(status_code=404, detail="User not found")
 
     delete_user(username)
     return {"status": "success"}
 
-
 @app.post("/api/users/change-password")
 async def change_user_password(request: Request):
     user = request.session.get("user")
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not user: raise HTTPException(status_code=401, detail="Not authenticated")
 
     data = await request.json()
     old_password = data.get("old_password")
     new_password = data.get("new_password")
 
-    if not old_password or not new_password:
-        raise HTTPException(status_code=400, detail="Both passwords required")
+    if not old_password or not new_password: raise HTTPException(status_code=400, detail="Both passwords required")
 
     try:
-        change_password(old_password, new_password, user)
+        change_password(old_password, new_password, str(user))
         return {"status": "success"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 
+# --------------------- GET ENDPOINT - SEARCHES AND URL LOOKUPS ---------------------
 @app.get("/albums/search")
 def searchAlbum(q: str, limit: int = 50):
     """
@@ -233,14 +213,11 @@ def searchAlbum(q: str, limit: int = 50):
         })
     return {"results": albums}
 
-
 @app.get("/albums/lookup")
 def urlAlbumLookup(url: str, collection_id: int = None):
     """
     If the search function does not result in the album that you want to download, then directly paste the album link to find it and download
     """
-
-
     if url and not collection_id:
         # Example URL for apple music -> https://music.apple.com/us/album/1359292515
         parts = url.rstrip("/").split("/")
@@ -269,16 +246,23 @@ def urlAlbumLookup(url: str, collection_id: int = None):
             "apple_music_url": album["collectionViewUrl"],
             "year": album["releaseDate"][:4] if album.get("releaseDate") else "N/A"
         }
+    return None
 
-
-
-
-
-# --------------------- DOWNLOAD ---------------------
+# --------------------- REQUEST CLASSES ---------------------
 class DownloadRequest(BaseModel):
     collection_id: int
     results: list[dict]  # Full list of search results to pick the album from
+class MetadataRequest(BaseModel):
+    folder: str
+    year: str
+class ConvertRequest(BaseModel): # a structure to help write the functions based on the artist and album name instead of the folder name which can be different based on the gamdl version and settings
+    artist: str
+    new_artist: str  = None # In case album artist does not match the folder
+    album_name: str
+    new_album_name: str  = None # In case album name does not the folder
+    overwrite: bool = False # option to overwrite existing flac files, default is false to prevent accidental overwriting
 
+# --------------------- POST ENDPOINT - DOWNLOAD ---------------------
 @app.post("/albums/download")
 async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
     """
@@ -357,10 +341,7 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
             yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
     return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-class MetadataRequest(BaseModel):
-    folder: str
-    year: str
-
+# --------------------- POST ENDPOINT - METADATA (YEAR) ---------------------
 async def update_year(artist: str, album_name: str, year: str):
     """
     Updates the year metadata on all audio files in the album folder.
@@ -445,7 +426,6 @@ async def update_year(artist: str, album_name: str, year: str):
     except Exception as e:
         yield f"[UPDATE_YEAR] Error: {e}"
 
-
 @app.post("/albums/metadata/year")
 async def updateYear(body: MetadataRequest):
     """
@@ -479,19 +459,10 @@ async def updateYear(body: MetadataRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
-
-class ConvertRequest(BaseModel): # a structure to help write the functions based on the artist and album name instead of the folder name which can be different based on the gamdl version and settings
-    artist: str
-    new_artist: str  = None # In case album artist does not match the folder
-    album_name: str
-    new_album_name: str  = None # In case album name does not the folder
-    overwrite: bool = False # option to overwrite existing flac files, default is false to prevent accidental overwriting
-
-
+# --------------------- POST ENDPOINT - M4A -> FLAC ---------------------
 def normalize_name(name: str) -> str:
     """Replace any non-alphanumeric characters (except spaces) with underscores, collapse multiples"""
     return re.sub(r'[^a-z0-9 ]+', '_', name.lower()).strip()
-
 @app.post("/albums/convert-flac")
 async def convertToFLAC(body: ConvertRequest):
     expected_name = f"{body.artist} - {body.album_name}"
@@ -573,6 +544,7 @@ async def convertToFLAC(body: ConvertRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
+# --------------------- POST ENDPOINT - MOVING ALBUM TO ONE DRIVE ---------------------
 @app.post("/albums/move-album")
 async def moveAlbum(body: ConvertRequest):
     expected_name = f"{body.artist} - {body.album_name}"
@@ -655,7 +627,7 @@ async def moveAlbum(body: ConvertRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
-
+# --------------------- POST ENDPOINT - RENAMING AND RESTRUCTURING ---------------------
 @app.post('/albums/rename-folder')
 async def renameFolder(body: ConvertRequest):
     new_artist = body.new_artist or body.artist
