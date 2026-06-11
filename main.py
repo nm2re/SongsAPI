@@ -38,15 +38,17 @@ except Exception as e:
 
 # --------------------- PAGES ---------------------
 @app.get("/")
+@app.get(f"{Link.BASE_URL}/")
 async def index(request: Request):
     """
     This is where the website search index will be, for now it just serves the index.html
     file which will be used for testing the frontend and backend connection.
     """
-    if "user" not in request.session: return RedirectResponse(url="/login", status_code=302)
+    if "user" not in request.session: return RedirectResponse(url=f"{Link.BASE_URL}/login", status_code=302)
     return FileResponse("templates/index.html")
 
 @app.get("/login")
+@app.get(f"{Link.BASE_URL}/login")
 async def login_page():
     """
     Login Page Rendering
@@ -54,13 +56,15 @@ async def login_page():
     return FileResponse("templates/login.html")
 
 @app.get("/admin")
+@app.get(f"{Link.BASE_URL}/admin")
 async def admin_page(request: Request):
-    if not request.session.get("is_admin"): return RedirectResponse(url="/login", status_code=302)
+    if not request.session.get("is_admin"): return RedirectResponse(url=f"{Link.BASE_URL}/login", status_code=302)
     return FileResponse("templates/admin.html")
 
 
 # --------------------- AUTH ENDPOINTS ---------------------
 @app.post("/api/login")
+@app.post(f"{Link.BASE_URL}/api/login")
 async def login(request: Request):
     data = await request.json()
     username = data.get("username")
@@ -87,6 +91,7 @@ async def login(request: Request):
     return {"status": "success", "is_admin": user["is_admin"]}
 
 @app.get("/api/user-info")
+@app.get(f"{Link.BASE_URL}/api/user-info")
 async def user_info(request: Request):
     """Get current user info"""
     user = request.session.get("user")
@@ -97,11 +102,13 @@ async def user_info(request: Request):
     return {"username": user, "is_admin": is_user_admin}
 
 @app.get("/api/users")
+@app.get(f"{Link.BASE_URL}/api/users")
 async def list_all_users(request: Request):
     if not request.session.get("is_admin"): raise HTTPException(status_code=403, detail="Unauthorized")
     return {"users": list_users()}
 
 @app.post("/api/users/create")
+@app.post(f"{Link.BASE_URL}/api/users/create")
 async def create_new_user(request: Request):
     if not request.session.get("is_admin"): raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -128,6 +135,7 @@ async def create_new_user(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/users/delete")
+@app.post(f"{Link.BASE_URL}/api/users/delete")
 async def delete_existing_user(request: Request):
     if not request.session.get("is_admin"): raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -142,6 +150,7 @@ async def delete_existing_user(request: Request):
     return {"status": "success"}
 
 @app.post("/api/users/change-password")
+@app.post(f"{Link.BASE_URL}/api/users/change-password")
 async def change_user_password(request: Request):
     user = request.session.get("user")
     if not user: raise HTTPException(status_code=401, detail="Not authenticated")
@@ -162,6 +171,7 @@ async def change_user_password(request: Request):
 
 # --------------------- GET ENDPOINT - SEARCHES AND URL LOOKUPS ---------------------
 @app.get("/albums/search")
+@app.get(f"{Link.BASE_URL}/albums/search")
 def searchAlbum(q: str, limit: int = 50):
     """
     Used to search for albums using the iTunes Search API.
@@ -214,6 +224,7 @@ def searchAlbum(q: str, limit: int = 50):
     return {"results": albums}
 
 @app.get("/albums/lookup")
+@app.get(f"{Link.BASE_URL}/albums/lookup")
 def urlAlbumLookup(url: str, collection_id: int = None):
     """
     If the search function does not result in the album that you want to download, then directly paste the album link to find it and download
@@ -264,6 +275,7 @@ class ConvertRequest(BaseModel): # a structure to help write the functions based
 
 # --------------------- POST ENDPOINT - DOWNLOAD ---------------------
 @app.post("/albums/download")
+@app.post(f"{Link.BASE_URL}/albums/download")
 async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
     """
     Selected albums will be downloaded using gamdl which is a command line tool that can download albums from Apple Music.
@@ -427,6 +439,7 @@ async def update_year(artist: str, album_name: str, year: str):
         yield f"[UPDATE_YEAR] Error: {e}"
 
 @app.post("/albums/metadata/year")
+@app.post(f"{Link.BASE_URL}/albums/metadata/year")
 async def updateYear(body: MetadataRequest):
     """
     Updates year metadata on audio files in a specific folder.
@@ -464,6 +477,7 @@ def normalize_name(name: str) -> str:
     """Replace any non-alphanumeric characters (except spaces) with underscores, collapse multiples"""
     return re.sub(r'[^a-z0-9 ]+', '_', name.lower()).strip()
 @app.post("/albums/convert-flac")
+@app.post(f"{Link.BASE_URL}/albums/convert-flac")
 async def convertToFLAC(body: ConvertRequest):
     expected_name = f"{body.artist} - {body.album_name}"
     normalized_expected = normalize_name(expected_name)
@@ -507,8 +521,16 @@ async def convertToFLAC(body: ConvertRequest):
                 loop.call_soon_threadsafe(q.put_nowait, line.rstrip())
             loop.call_soon_threadsafe(q.put_nowait, None)
 
+        # process = subprocess.Popen(
+        #     ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-FolderPath", str(folder)],
+        #     stdout=subprocess.PIPE,
+        #     stderr=subprocess.PIPE,
+        #     text=True,
+        #     bufsize=0
+        # )
+
         process = subprocess.Popen(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-FolderPath", str(folder)],
+            ["bash", str(script_path), str(folder)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -546,6 +568,7 @@ async def convertToFLAC(body: ConvertRequest):
 
 # --------------------- POST ENDPOINT - MOVING ALBUM TO ONE DRIVE ---------------------
 @app.post("/albums/move-album")
+@app.post(f"{Link.BASE_URL}/albums/move-album")
 async def moveAlbum(body: ConvertRequest):
     expected_name = f"{body.artist} - {body.album_name}"
     normalized_expected = normalize_name(expected_name)
@@ -629,6 +652,7 @@ async def moveAlbum(body: ConvertRequest):
 
 # --------------------- POST ENDPOINT - RENAMING AND RESTRUCTURING ---------------------
 @app.post('/albums/rename-folder')
+@app.post(f"{Link.BASE_URL}/albums/rename-folder")
 async def renameFolder(body: ConvertRequest):
     new_artist = body.new_artist or body.artist
     new_album = body.new_album_name or body.album_name

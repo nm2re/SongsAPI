@@ -287,9 +287,11 @@
 </main>
 
 <script>
+
+    const API_BASE_URL = '/songs-api';
     async function loadUsers() {
         try {
-            const response = await fetch("http://localhost:8000/api/users", {
+            const response = await fetch(`${API_BASE_URL}/api/users`, {
                 credentials: "include"  // Required for session cookies
             });
             const data = await response.json();
@@ -320,7 +322,7 @@
         if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
 
         try {
-            const response = await fetch("http://localhost:8000/api/users/delete", {
+            const response = await fetch(`${API_BASE_URL}/api/users/delete`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username })
@@ -343,7 +345,7 @@
         const msgEl = document.getElementById("createMessage");
 
         try {
-            const response = await fetch("http://localhost:8000/api/users/create", {
+            const response = await fetch(`${API_BASE_URL}/api/users/create`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username, password })
@@ -370,7 +372,7 @@
         const msgEl = document.getElementById("changeMessage");
 
         try {
-            const response = await fetch("http://localhost:8000/api/users/change-password", {
+            const response = await fetch(`${API_BASE_URL}/api/users/change-password`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
@@ -390,7 +392,7 @@
     });
 
     async function logout() {
-        await fetch("http://localhost:8000/api/logout", { method: "POST" });
+        await fetch(`${API_BASE_URL}/api/logout`, { method: "POST" });
         window.location.href = "/login";
     }
 

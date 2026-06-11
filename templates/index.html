@@ -578,7 +578,7 @@
     <div class="header-actions" id="headerActions">
         <!-- Admin button — shown only for admins -->
         <button id="adminBtn" style="display:none; border: 1px solid #555; background: transparent; color: #888; padding: 6px 12px; font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; transition: all 0.15s;"
-                onclick="window.location.href='/admin'"
+                onclick="window.location.href=`${API_BASE_URL}/admin`"
                 onmouseover="this.style.borderColor='var(--accent)'; this.style.color='var(--accent)'"
                 onmouseout="this.style.borderColor='#555'; this.style.color='#888'">
             ADMIN
@@ -675,13 +675,13 @@
 </div>
 
 <script>
-    const = API_BASE_URL = '/songs-api';
+    const API_BASE_URL = '/songs-api';
     let currentDownloads = {};
 
     // Check if user is admin on page load
     async function checkAdmin() {
         try {
-            const response = await fetch("http://localhost:8000/api/user-info");
+            const response = await fetch(`${API_BASE_URL}/api/user-info`);
             const data = await response.json();
 
             if (data.is_admin) {
@@ -783,8 +783,8 @@
     }
 
     async function logout() {
-        await fetch("http://localhost:8000/api/logout", { method: "POST" });
-        window.location.href = "/login";
+        await fetch(`${API_BASE_URL}/api/logout`, { method: "POST" });
+        window.location.href = `${API_BASE_URL}/login`;
     }
 
     // Check admin on page load
