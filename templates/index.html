@@ -675,7 +675,7 @@
 </div>
 
 <script>
-
+    const = API_BASE_URL = '/songs-api';
     let currentDownloads = {};
 
     // Check if user is admin on page load
@@ -917,7 +917,7 @@
         resultsDiv.innerHTML = `<div class="empty-state"><span class="big">...</span>Searching</div>`;
 
         const response = await fetch(
-            `http://localhost:8000/albums/search?q=${encodeURIComponent(query)}`,
+            `${API_BASE_URL}/albums/search?q=${encodeURIComponent(query)}`,
             { credentials: "include" }
         );
 
@@ -950,7 +950,7 @@
         resultsDiv.innerHTML = `<div class="empty-state"><span class="big">...</span>Looking up</div>`;
 
         try {
-            const response = await fetch(`http://localhost:8000/albums/lookup?url=${encodeURIComponent(url)}`, {
+            const response = await fetch(`${API_BASE_URL}/albums/lookup?url=${encodeURIComponent(url)}`, {
                 credentials: "include"
             });
             const album = await response.json();
@@ -1008,7 +1008,7 @@
         statusEl.className = "status-tag downloading";
         statusEl.textContent = "Downloading";
 
-        const response = await fetch("http://localhost:8000/albums/download", {
+        const response = await fetch(`${API_BASE_URL}/albums/download`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -1133,7 +1133,7 @@
         }
 
         try {
-            const response = await fetch("http://localhost:8000/albums/convert-flac", {
+            const response = await fetch(`${API_BASE_URL}/albums/convert-flac`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
@@ -1225,7 +1225,7 @@
             updateDownloadsPanel();
         }
 
-        const response = await fetch("http://localhost:8000/albums/move-album", {
+        const response = await fetch(`${API_BASE_URL}/albums/move-album`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ artist, album_name: albumName, overwrite })
@@ -1349,7 +1349,7 @@
         statusEl.className = "status-tag moving";
         statusEl.textContent = "Renaming...";
 
-        const response = await fetch("http://localhost:8000/albums/rename-folder", {
+        const response = await fetch(`${API_BASE_URL}/albums/rename-folder`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -1532,7 +1532,7 @@
             // Intercept and wrap downloadAlbum to resolve when done
             (async () => {
                 try {
-                    const response = await fetch("http://localhost:8000/albums/download", {
+                    const response = await fetch(`${API_BASE_URL}/albums/download`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         credentials: "include",
@@ -1596,7 +1596,7 @@
         statusEl.className = "status-tag moving";
         statusEl.textContent = "Renaming...";
 
-        const response = await fetch("http://localhost:8000/albums/rename-folder", {
+        const response = await fetch(`${API_BASE_URL}/albums/rename-folder`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -1657,7 +1657,7 @@
 
             (async () => {
                 try {
-                    const response = await fetch("http://localhost:8000/albums/convert-flac", {
+                    const response = await fetch(`${API_BASE_URL}/albums/convert-flac`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         credentials: "include",
@@ -1710,7 +1710,7 @@
     //
     //         (async () => {
     //             try {
-    //                 const response = await fetch("http://localhost:8000/albums/move-album", {
+    //                 const response = await fetch("${API_BASE_URL}/albums/move-album", {
     //                     method: "POST",
     //                     headers: { "Content-Type": "application/json" },
     //                     credentials: "include",
@@ -1785,7 +1785,7 @@
 
             (async () => {
                 try {
-                    const response = await fetch("http://localhost:8000/albums/move-album", {
+                    const response = await fetch(`${API_BASE_URL}/albums/move-album`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         credentials: "include",
