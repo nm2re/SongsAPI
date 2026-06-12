@@ -529,7 +529,7 @@ async def convertToFLAC(body: ConvertRequest):
         # )
 
         process = subprocess.Popen(
-            ["bash", str(script_path), str(folder)],
+            [Link.BASH_URL, str(script_path), str(folder)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
