@@ -3,7 +3,6 @@ import queue
 import re
 import shutil
 import threading
-import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -567,6 +566,106 @@ async def convertToFLAC(body: ConvertRequest):
     )
 
 # --------------------- POST ENDPOINT - MOVING ALBUM TO ONE DRIVE ---------------------
+# @app.post("/albums/move-album")
+# @app.post(f"{Link.BASE_URL}/albums/move-album")
+# async def moveAlbum(body: ConvertRequest):
+#     expected_name = f"{body.artist} - {body.album_name}"
+#     normalized_expected = normalize_name(expected_name)
+#
+#     async def streamOutput():
+#         try:
+#             folders = [f for f in Link.DOWNLOAD_DIR.iterdir() if f.is_dir()]
+#         except Exception as e:
+#             yield f"data: [MOVE][ERROR] Could not read download dir: {e}\n\n"
+#             return
+#
+#         source = next(
+#             (f for f in folders if normalize_name(f.name) == normalized_expected),
+#             None
+#         )
+#
+#         if source is None:
+#             normalized_artist = normalize_name(body.artist)
+#             artist_folders = [
+#                 f for f in folders
+#                 if normalize_name(f.name).startswith(normalized_artist)
+#             ]
+#             if artist_folders:
+#                 source = max(artist_folders, key=lambda f: f.stat().st_mtime)
+#                 yield f"data: [MOVE] Exact match failed, using most recently modified: {source.name}\n\n"
+#
+#         if source is None:
+#             yield f"data: [MOVE][ERROR] No matching folder found for: {expected_name}\n\n"
+#             return
+#
+#         destination = Link.DESTINATION_DIR / source.name
+#
+#         yield f"data: [MOVE] Source: {source}\n\n"
+#         yield f"data: [MOVE] Destination: {destination}\n\n"
+#
+#         # Check if destination parent exists
+#         if not destination.parent.exists():
+#             yield f"data: [MOVE][ERROR] Destination parent folder does not exist: {destination.parent}\n\n"
+#             return
+#
+#         if destination.exists():
+#             if body.overwrite:
+#                 yield f"data: [MOVE] Overwrite enabled, removing {destination}...\n\n"
+#                 try:
+#                     shutil.rmtree(destination)
+#                 except Exception as e:
+#                     yield f"data: [MOVE][ERROR] Failed to remove existing: {e}\n\n"
+#                     return
+#             else:
+#                 yield f"data: [MOVE][ERROR] Album already exists at {destination}\n\n"
+#                 return
+#
+#         max_retries = 5
+#         retry_delay = 2
+#
+#         for attempt in range(max_retries):
+#             try:
+#                 yield f"data: [MOVE] Attempt {attempt + 1}/{max_retries}: Moving {source.name}...\n\n"
+#
+#                 # Run move in thread pool with timeout
+#                 loop = asyncio.get_event_loop()
+#                 await asyncio.wait_for(
+#                     loop.run_in_executor(None, shutil.move, str(source), str(destination)),
+#                     timeout=30.0  # 30 second timeout
+#                 )
+#
+#                 yield f"data: [MOVE] Move completed!\n\n"
+#                 yield f"data: [MOVE] Final location: {destination}\n\n"
+#                 yield "data: [MOVE][DONE] Album moved successfully!\n\n"
+#                 return
+#
+#             except asyncio.TimeoutError:
+#                 if attempt < max_retries - 1:
+#                     yield f"data: [MOVE] Move timed out, retrying in {retry_delay}s...\n\n"
+#                     await asyncio.sleep(retry_delay)
+#                 else:
+#                     yield f"data: [MOVE][ERROR] Move operation timed out after {max_retries} attempts\n\n"
+#                     return
+#
+#             except PermissionError:
+#                 if attempt < max_retries - 1:
+#                     yield f"data: [MOVE] Access denied (OneDrive may be syncing), retrying in {retry_delay}s...\n\n"
+#                     await asyncio.sleep(retry_delay)
+#                 else:
+#                     yield f"data: [MOVE][ERROR] Permission denied after {max_retries} attempts. OneDrive may be locked.\n\n"
+#                     return
+#
+#             except Exception as e:
+#                 yield f"data: [MOVE][ERROR] {str(e)}\n\n"
+#                 return
+#
+#     return StreamingResponse(
+#         streamOutput(),
+#         media_type="text/event-stream",
+#         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+#     )
+
+# --------------------- POST ENDPOINT - RENAMING AND RESTRUCTURING ---------------------
 @app.post("/albums/move-album")
 @app.post(f"{Link.BASE_URL}/albums/move-album")
 async def moveAlbum(body: ConvertRequest):
@@ -580,13 +679,11 @@ async def moveAlbum(body: ConvertRequest):
             yield f"data: [MOVE][ERROR] Could not read download dir: {e}\n\n"
             return
 
-        # 1. Try exact normalized match
         source = next(
             (f for f in folders if normalize_name(f.name) == normalized_expected),
             None
         )
 
-        # 2. Fallback: artist prefix + most recently modified
         if source is None:
             normalized_artist = normalize_name(body.artist)
             artist_folders = [
@@ -595,54 +692,54 @@ async def moveAlbum(body: ConvertRequest):
             ]
             if artist_folders:
                 source = max(artist_folders, key=lambda f: f.stat().st_mtime)
-                yield f"data: [MOVE] Exact match failed, using most recently modified: {source.name}\n\n"
 
         if source is None:
-            yield f"data: [MOVE][ERROR] No matching folder found for: {expected_name}\n\n"
+            yield f"data: [MOVE][ERROR] No matching folder found\n\n"
             return
 
-        # Use the actual folder name for destination to preserve the renamed name
         destination = Link.DESTINATION_DIR / source.name
 
         yield f"data: [MOVE] Source: {source}\n\n"
         yield f"data: [MOVE] Destination: {destination}\n\n"
 
-        if destination.exists():
-            if body.overwrite:
-                yield f"data: [MOVE] Overwrite enabled, removing {destination}...\n\n"
-                try:
-                    shutil.rmtree(destination)
-                except Exception as e:
-                    yield f"data: [MOVE][ERROR] Failed to remove existing: {e}\n\n"
-                    return
-            else:
-                yield f"data: [MOVE][ERROR] Album already exists at {destination}\n\n"
-                return
+        try:
+            yield f"data: [MOVE] Moving to OneDrive via rclone...\n\n"
 
-        max_retries = 5
-        retry_delay = 2
+            # Use rclone move command instead of cp
+            # This works directly with OneDrive instead of the FUSE mount
+            process = await asyncio.create_subprocess_exec(
+                "rclone", "move",
+                str(source),  # Source on local disk
+                f"onedrive-ondemand:MAIN/Public/Music/Albums/{source.name}",  # OneDrive remote path
+                "--verbose",
+                "--transfers=4",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
 
-        for attempt in range(max_retries):
-            try:
-                yield f"data: [MOVE] Attempt {attempt + 1}/{max_retries}: Moving {source.name}...\n\n"
-                shutil.move(str(source), str(destination))
-                yield f"data: [MOVE] Move completed!\n\n"
+            # Stream output
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+
+                message = line.decode('utf-8', errors='replace').strip()
+                if message:
+                    yield f"data: [MOVE] {message}\n\n"
+
+            returncode = await process.wait()
+
+            if returncode == 0:
+                yield f"data: [MOVE] Successfully moved to OneDrive\n\n"
                 yield f"data: [MOVE] Final location: {destination}\n\n"
                 yield "data: [MOVE][DONE] Album moved successfully!\n\n"
-                return
+            else:
+                stderr = await process.stderr.read()
+                error_msg = stderr.decode('utf-8', errors='replace')
+                yield f"data: [MOVE][ERROR] rclone move failed: {error_msg}\n\n"
 
-            except PermissionError:
-                if attempt < max_retries - 1:
-                    yield f"data: [MOVE] Access denied (OneDrive may be syncing), retrying in {retry_delay}s...\n\n"
-                    time.sleep(retry_delay)
-                else:
-                    yield f"data: [MOVE][ERROR] Permission denied after {max_retries} attempts. OneDrive may be locked.\n\n"
-                    yield f"data: [MOVE][ERROR] Try pausing OneDrive sync or moving manually.\n\n"
-                    return
-
-            except Exception as e:
-                yield f"data: [MOVE][ERROR] {str(e)}\n\n"
-                return
+        except Exception as e:
+            yield f"data: [MOVE][ERROR] {str(e)}\n\n"
 
     return StreamingResponse(
         streamOutput(),
@@ -650,7 +747,7 @@ async def moveAlbum(body: ConvertRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
-# --------------------- POST ENDPOINT - RENAMING AND RESTRUCTURING ---------------------
+
 @app.post('/albums/rename-folder')
 @app.post(f"{Link.BASE_URL}/albums/rename-folder")
 async def renameFolder(body: ConvertRequest):
