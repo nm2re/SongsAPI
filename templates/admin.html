@@ -237,7 +237,8 @@
         <span>Admin Panel</span>
     </div>
     <div class="header-actions">
-        <a href="/"><button class="btn-nav">← Back</button></a>
+<!--        <a href="/"><button class="btn-nav"><- Back</button></a>-->
+        <button class="btn-nav" id="backBtn">Back</button>
         <button class="btn-nav" onclick="logout()">Logout</button>
     </div>
 </header>
@@ -289,6 +290,11 @@
 <script>
 
     const API_BASE_URL = '/songs-api';
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+        window.location.href = `${API_BASE_URL}`;
+    });
+
     async function loadUsers() {
         try {
             const response = await fetch(`${API_BASE_URL}/api/users`, {
