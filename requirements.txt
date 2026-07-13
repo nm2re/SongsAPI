@@ -4,7 +4,7 @@ passlib==1.7.4
 pydantic==2.13.4
 requests==2.34.2
 starlette==1.2.1
-itsdangerous
-uvicorn
-argon2-cffi
+itsdangerous==2.2.0
+uvicorn==0.48.0
+argon2-cffi==25.1.0
 gamdl==3.5
