@@ -31,12 +31,12 @@ A full-stack web application that automates downloading, organizing, and convert
 ```bash
 git clone <repo>
 cd SongsAPI
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
 # Initialize database
-python -c "from models.database import initialize_database; initialize_database()"
+python3 -c "from models.database import initialize_database; initialize_database()"
 
 # Run server
 uvicorn main:app --host 0.0.0.0 --port 8000
@@ -254,26 +254,6 @@ JSON endpoints return album metadata with collection_id, artist, album_name, yea
 │   └── 02 Song.flac
 └── Taylor Swift - Red (Deluxe Version)/
     └── [16 tracks].flac
-```
-
-#### Configuration in Secrets.py
-
-```python
-class Link:
-    # Source directory (initial downloads)
-    DOWNLOAD_DIR = Path("/home/ubuntu/SongsAPI/Albums")
-    
-    # Destination directory (final OneDrive location)
-    DESTINATION_DIR = Path("/mnt/music")
-    
-    # Folder structure after download:
-    # {DOWNLOAD_DIR}/{artist}/{album}/[tracks]
-    
-    # Folder structure after rename:
-    # {DOWNLOAD_DIR}/{artist} - {album}/[tracks]
-    
-    # Folder structure after move:
-    # {DESTINATION_DIR}/{artist} - {album}/[tracks]
 ```
 
 ## Workflow Summary
