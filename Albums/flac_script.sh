@@ -44,7 +44,6 @@ convert_file() {
         echo "-------------------------------"
     fi
 }
-
 # Convert one at a time
 while IFS= read -r file; do
     filename=$(basename "$file")
