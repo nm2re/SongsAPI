@@ -237,7 +237,6 @@
         <span>Admin Panel</span>
     </div>
     <div class="header-actions">
-<!--        <a href="/"><button class="btn-nav"><- Back</button></a>-->
         <button class="btn-nav" id="backBtn">Back</button>
         <button class="btn-nav" onclick="logout()">Logout</button>
     </div>
@@ -359,15 +358,15 @@
 
             const data = await response.json();
             if (response.ok) {
-                msgEl.innerHTML = `<div class="message success">✓ User "${username}" created successfully</div>`;
+                msgEl.innerHTML = `<div class="message success">User "${username}" created successfully</div>`;
                 document.getElementById("createUserForm").reset();
                 loadUsers();
                 setTimeout(() => msgEl.innerHTML = "", 3000);
             } else {
-                msgEl.innerHTML = `<div class="message error">✗ ${data.detail}</div>`;
+                msgEl.innerHTML = `<div class="message error">${data.detail}</div>`;
             }
         } catch (err) {
-            msgEl.innerHTML = `<div class="message error">✗ Error: ${err}</div>`;
+            msgEl.innerHTML = `<div class="message error">Error: ${err}</div>`;
         }
     });
 
@@ -386,14 +385,14 @@
 
             const data = await response.json();
             if (response.ok) {
-                msgEl.innerHTML = `<div class="message success">✓ Password changed successfully</div>`;
+                msgEl.innerHTML = `<div class="message success">Password changed successfully</div>`;
                 document.getElementById("changePasswordForm").reset();
                 setTimeout(() => msgEl.innerHTML = "", 3000);
             } else {
-                msgEl.innerHTML = `<div class="message error">✗ ${data.detail}</div>`;
+                msgEl.innerHTML = `<div class="message error">${data.detail}</div>`;
             }
         } catch (err) {
-            msgEl.innerHTML = `<div class="message error">✗ Error: ${err}</div>`;
+            msgEl.innerHTML = `<div class="message error">Error: ${err}</div>`;
         }
     });
 

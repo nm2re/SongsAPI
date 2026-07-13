@@ -3,6 +3,7 @@ import queue
 import re
 import shutil
 import threading
+import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -189,8 +190,7 @@ def searchAlbum(q: str, limit: int = 50):
             response = requests.get(Link.ITUNES_URL, params={
                 "term": cleaned_query,
                 "entity": "album",
-                "limit": limit,
-                "country": "us"
+                "limit": limit
             })
 
     results = response.json().get("results", []) # returns blank [] if there are no results
@@ -203,7 +203,6 @@ def searchAlbum(q: str, limit: int = 50):
             "term": artist,
             "entity": "album",
             "limit": limit,
-            "country": "us"
         })
         results = response.json().get("results", [])
 
@@ -226,25 +225,37 @@ def searchAlbum(q: str, limit: int = 50):
 @app.get(f"{Link.BASE_URL}/albums/lookup")
 def urlAlbumLookup(url: str, collection_id: int = None):
     """
-    If the search function does not result in the album that you want to download, then directly paste the album link to find it and download
+    If the search function does not result in the album that you want to download, the directly search the URL
+    Lookup album directly from an Apple Music URL.
+    Supports region-specific storefronts.
+
     """
+
     if url and not collection_id:
-        # Example URL for apple music -> https://music.apple.com/us/album/1359292515
+
         parts = url.rstrip("/").split("/")
 
         try:
-            collection_id = int(parts[-1]) # last component of the URL is the ID
+            country = parts[3]  # music.apple.com/in/...
+            collection_id = int(parts[-1])
         except (ValueError, IndexError):
             raise HTTPException(status_code=400, detail="Invalid URL Format")
 
-
-        if not collection_id:
-            raise HTTPException(status_code=400, detail="Collection ID not found in URL")
-
-        response = requests.get("https://itunes.apple.com/lookup", params={"id": collection_id, "entity": "album"})
+        response = requests.get(
+            "https://itunes.apple.com/lookup",
+            params={
+                "id": collection_id,
+                "entity": "album",
+                "country": country
+            }
+        )
 
         results = response.json().get("results", [])
-        album = next((r for r in results if r.get("wrapperType") == "collection"), None)
+
+        album = next(
+            (r for r in results if r.get("wrapperType") == "collection"),
+            None
+        )
 
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
@@ -254,9 +265,14 @@ def urlAlbumLookup(url: str, collection_id: int = None):
             "album_name": album["collectionName"],
             "artist": album["artistName"],
             "apple_music_url": album["collectionViewUrl"],
-            "year": album["releaseDate"][:4] if album.get("releaseDate") else "N/A"
+            "year": album["releaseDate"][:4]
+            if album.get("releaseDate")
+            else "N/A",
+            "country": country
         }
+
     return None
+
 
 # --------------------- REQUEST CLASSES ---------------------
 class DownloadRequest(BaseModel):
@@ -429,9 +445,9 @@ async def update_year(artist: str, album_name: str, year: str):
                         audio.save()
 
                     changed.append(file.name)
-                    yield f"[UPDATE_YEAR] ✓ Updated {file.name}"
+                    yield f"[UPDATE_YEAR] Updated {file.name}"
                 except Exception as e:
-                    yield f"[UPDATE_YEAR] ✗ Error on {file.name}: {e}"
+                    yield f"[UPDATE_YEAR] Error on {file.name}: {e}"
 
         yield f"[UPDATE_YEAR] Complete: {len(changed)}/{file_count} files updated"
     except Exception as e:

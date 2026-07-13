@@ -752,15 +752,15 @@
 
             if (dl.status === 'done') {
                 statusColor = '#00ff00';
-                statusText = '✓ DONE';
+                statusText = 'DONE';
             }
             if (dl.status === 'error') {
                 statusColor = '#ff0000';
-                statusText = '✗ ERROR';
+                statusText = 'ERROR';
             }
             if (dl.status === 'converting') {
                 statusColor = '#ffaa00';
-                statusText = '⟳ CONVERTING';
+                statusText = 'CONVERTING';
             }
 
             return `
@@ -862,10 +862,10 @@
                         if (statusEl) {
                             if (status === "done") {
                                 statusEl.className = "status-tag done";
-                                statusEl.textContent = "✓ Downloaded";
+                                statusEl.textContent = "Downloaded";
                             } else if (status === "error") {
                                 statusEl.className = "status-tag error";
-                                statusEl.textContent = "✗ Error";
+                                statusEl.textContent = "Error";
                             } else if (downloadLogs[id] && downloadLogs[id].includes("[CONVERT]")) {
                                 statusEl.className = "status-tag converting";
                                 statusEl.textContent = "Converting";
@@ -1039,7 +1039,7 @@
 
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
-                    statusEl.textContent = "✓ Downloaded";
+                    statusEl.textContent = "Downloaded";
                     btn.disabled = false;
                     updateDownloadStatus(collectionId, "done");
                     saveState();
@@ -1049,7 +1049,7 @@
 
                 if (content.startsWith("[ERROR]")) {
                     statusEl.className = "status-tag error";
-                    statusEl.textContent = "✗ Error";
+                    statusEl.textContent = "Error";
                     updateDownloadStatus(collectionId, "error");
                     logBox.textContent += content + "\n";
                     downloadLogs[collectionId] = logBox.textContent;
@@ -1075,7 +1075,7 @@
 
         card.innerHTML = `
         <div class="album-card-inner">
-            <div class="album-index">●</div>
+            <div class="album-index">-</div>
             <div class="album-info">
                 <div class="album-name">${album.album_name}</div>
                 <div class="album-meta">
@@ -1089,7 +1089,7 @@
                     <span class="overwrite-label">overwrite</span>
                 </label>
                 <button class="btn btn-upload" id="upload-btn-${album.collection_id}" onclick="uploadAlbum(${album.collection_id})" style="background: var(--accent); color: #000; font-weight: bold;">
-                    ⬆ UPLOAD
+                    UPLOAD
                 </button>
                 <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
                     1. Download
@@ -1098,7 +1098,7 @@
                     2. Rename
                 </button>
                 <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                    3. → FLAC
+                    3. -> FLAC
                 </button>
                 <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
                     4. Move
@@ -1160,7 +1160,7 @@
 
                     if (content === "[DONE]") {
                         statusEl.className = "status-tag done";
-                        statusEl.textContent = "✓ Converted";
+                        statusEl.textContent = "Converted";
                         logBox.textContent += content + "\n";
                         downloadLogs[collectionId] = logBox.textContent;
 
@@ -1176,7 +1176,7 @@
 
                     if (content.startsWith("[ERROR]")) {
                         statusEl.className = "status-tag error";
-                        statusEl.textContent = "✗ Error";
+                        statusEl.textContent = "Error";
                         logBox.textContent += content + "\n";
                         downloadLogs[collectionId] = logBox.textContent;
 
@@ -1198,7 +1198,7 @@
             }
         } catch (err) {
             statusEl.className = "status-tag error";
-            statusEl.textContent = "✗ Failed";
+            statusEl.textContent = "Failed";
             logBox.textContent += `[ERROR] ${err.message}\n`;
             downloadLogs[collectionId] = logBox.textContent;
 
@@ -1246,7 +1246,7 @@
 
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
-                    statusEl.textContent = "✓ Moved";
+                    statusEl.textContent = "Moved";
 
                     // Remove from active downloads, add to completed in panel
                     if (currentDownloads[collectionId]) {
@@ -1259,7 +1259,7 @@
                         completed.innerHTML = `
                         <div class="download-item-title">${dl.albumName}</div>
                         <div class="download-item-artist">${dl.artist}</div>
-                        <div class="download-item-progress" style="color: var(--green);">✓ MOVED TO VAULT</div>
+                        <div class="download-item-progress" style="color: var(--green);">MOVED TO VAULT</div>
                     `;
                         // Prepend so it appears at the top
                         list.insertBefore(completed, list.firstChild);
@@ -1289,7 +1289,7 @@
 
                 if (content.startsWith("[ERROR]")) {
                     statusEl.className = "status-tag error";
-                    statusEl.textContent = "✗ Error";
+                    statusEl.textContent = "Error";
 
                     if (currentDownloads[collectionId]) {
                         currentDownloads[collectionId].status = "error";
@@ -1307,7 +1307,7 @@
         }
     }
 
-    // ── Rename modal ──────────────────────────────────────────────────────────
+    // -- Rename modal ----------------------------------------------------------
 
     function openRenameModal(artist, albumName, collectionId) {
         renameTarget = { collectionId, originalArtist: artist, originalAlbum: albumName };
@@ -1386,7 +1386,7 @@
 
                 if (content === "[DONE]") {
                     statusEl.className = "status-tag done";
-                    statusEl.textContent = "✓ Renamed";
+                    statusEl.textContent = "Renamed";
 
                     // Update the card's button onclick attributes with the new names
                     const card = document.getElementById(`album-${collectionId}`);
@@ -1418,7 +1418,7 @@
 
                 if (content.startsWith("[ERROR]")) {
                     statusEl.className = "status-tag error";
-                    statusEl.textContent = "✗ Error";
+                    statusEl.textContent = "Error";
                     saveState();
                     return;
                 }
@@ -1438,7 +1438,7 @@
     });
 
 
-     // ALL IN ONE BUTTON TO UPLOAD THE ALBUM (PERFORM ALL 4 STEPS)
+    // ALL IN ONE BUTTON TO UPLOAD THE ALBUM (PERFORM ALL 4 STEPS)
     async function uploadAlbum(collectionId) {
         // Get album from currentResults or pinnedAlbumsDetails
         let album = currentResults.find(r => r.collection_id === collectionId);
@@ -1475,7 +1475,7 @@
             saveState();
 
             await downloadAlbumStep(collectionId, album);
-            logBox.textContent += "[STEP 1/4] ✓ Download complete\n";
+            logBox.textContent += "[STEP 1/4] Download complete\n";
             downloadLogs[collectionId] = logBox.textContent;
             saveState();
 
@@ -1485,7 +1485,7 @@
             saveState();
 
             await renameAlbumDirect(artist, albumName, collectionId);
-            logBox.textContent += "[STEP 2/4] ✓ Rename complete\n";
+            logBox.textContent += "[STEP 2/4] Rename complete\n";
             downloadLogs[collectionId] = logBox.textContent;
             saveState();
 
@@ -1495,7 +1495,7 @@
             saveState();
 
             await convertAlbumStep(collectionId, artist, albumName);
-            logBox.textContent += "[STEP 3/4] ✓ Conversion complete\n";
+            logBox.textContent += "[STEP 3/4] Conversion complete\n";
             downloadLogs[collectionId] = logBox.textContent;
             saveState();
 
@@ -1506,11 +1506,11 @@
 
             const overwrite = document.getElementById(`overwrite-${collectionId}`).checked;
             await moveAlbumStep(collectionId, artist, albumName, overwrite);
-            logBox.textContent += "[STEP 4/4] ✓ Move complete\n";
+            logBox.textContent += "[STEP 4/4] Move complete\n";
             downloadLogs[collectionId] = logBox.textContent;
 
             statusEl.className = "status-tag done";
-            statusEl.textContent = "✓ Complete";
+            statusEl.textContent = "Complete";
             updateDownloadStatus(collectionId, "done");
             saveState();
 
@@ -1518,7 +1518,7 @@
             logBox.textContent += `\n[ERROR] Upload failed: ${err.message}\n`;
             downloadLogs[collectionId] = logBox.textContent;
             statusEl.className = "status-tag error";
-            statusEl.textContent = "✗ Failed";
+            statusEl.textContent = "Failed";
             saveState();
         }
     }
@@ -1634,14 +1634,14 @@
 
                         if (content === "[RENAME][DONE]") {
                             statusEl.className = "status-tag done";
-                            statusEl.textContent = "✓ Renamed";
+                            statusEl.textContent = "Renamed";
                             resolve();
                             return;
                         }
 
                         if (content.startsWith("[ERROR]")) {
                             statusEl.className = "status-tag error";
-                            statusEl.textContent = "✗ Error";
+                            statusEl.textContent = "Error";
                             reject(new Error(content));
                             return;
                         }
@@ -1840,7 +1840,7 @@
                                 clearTimeout(timeout);
 
                                 statusEl.className = "status-tag done";
-                                statusEl.textContent = "✓ Done";
+                                statusEl.textContent = "Done";
                                 updateDownloadStatus(collectionId, "done");
 
                                 pinnedAlbums.delete(collectionId);
@@ -1868,7 +1868,7 @@
                                 receivedFinalMessage = true;
                                 clearTimeout(timeout);
                                 statusEl.className = "status-tag error";
-                                statusEl.textContent = "✗ Error";
+                                statusEl.textContent = "Error";
                                 updateDownloadStatus(collectionId, "error");
                                 reject(new Error(content));
                                 return;
@@ -1878,7 +1878,7 @@
                 } catch (err) {
                     clearTimeout(timeout);
                     statusEl.className = "status-tag error";
-                    statusEl.textContent = "✗ Error";
+                    statusEl.textContent = "Error";
                     updateDownloadStatus(collectionId, "error");
                     logBox.textContent += `\n[ERROR] ${err.message}\n`;
                     downloadLogs[collectionId] = logBox.textContent;
