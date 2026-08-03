@@ -74,6 +74,8 @@ class Link:
     CONVERT_TO_FLAC = "flac_script.sh"
     # Audio codec (options: alac, aac, opus)
     CODEC = "alac"
+    # OneDrive mount point for rclone (format: "remote_name:/path/to/mount")
+    RCLONE_DRIVE_MOUNT = "YOUR_ONEDRIVE_DRIVE_NAME:/LOCATION/TO/MOUNT"
     
 
 class Token:

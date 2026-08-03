@@ -726,7 +726,7 @@ async def moveAlbum(body: ConvertRequest):
             process = await asyncio.create_subprocess_exec(
                 "rclone", "move",
                 str(source),  # Source on local disk
-                f"{Link.RCLONE_DRIVE}:cdn/Albums/{source.name}",  # OneDrive remote path
+                f"{Link.RCLONE_DRIVE_MOUNT}/{source.name}",  # OneDrive remote path
                 "--verbose",
                 "--transfers=4",
                 stdout=asyncio.subprocess.PIPE,
