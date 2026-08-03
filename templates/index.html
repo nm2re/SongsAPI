@@ -170,6 +170,7 @@
             margin-bottom: 2px;
             transition: border-color 0.15s, background 0.15s;
             animation: slideIn 0.3s ease both;
+            position: relative;  /* Add this for absolute positioning of close button */
         }
 
         .album-card:hover {
@@ -187,6 +188,37 @@
             display: flex;
             align-items: center;
             gap: 16px;
+        }
+
+        /* New close button styles */
+        .btn-close {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            padding: 0;
+            border: none;
+            background: rgba(255, 50, 50, 0.8);
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            z-index: 10;
+        }
+
+        .btn-close:hover {
+            background: rgba(255, 20, 20, 1);
+            transform: scale(1.15);
+        }
+
+        .btn-close:active {
+            transform: scale(0.9);
         }
 
         .album-index {
@@ -1074,41 +1106,66 @@
         const escaped = (s) => s.replace(/'/g, "\\'");
 
         card.innerHTML = `
-        <div class="album-card-inner">
-            <div class="album-index">-</div>
-            <div class="album-info">
-                <div class="album-name">${album.album_name}</div>
-                <div class="album-meta">
-                    ${album.artist}
-                    <span class="album-year">${album.year}</span>
-                </div>
-            </div>
-            <div class="album-actions">
-                <label class="overwrite-toggle" title="Overwrite if already exists at destination">
-                    <input type="checkbox" id="overwrite-${album.collection_id}">
-                    <span class="overwrite-label">overwrite</span>
-                </label>
-                <button class="btn btn-upload" id="upload-btn-${album.collection_id}" onclick="uploadAlbum(${album.collection_id})" style="background: var(--accent); color: #000; font-weight: bold;">
-                    UPLOAD
-                </button>
-                <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
-                    1. Download
-                </button>
-                <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                    2. Rename
-                </button>
-                <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                    3. -> FLAC
-                </button>
-                <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
-                    4. Move
-                </button>
-                <span class="status-tag" id="status-${album.collection_id}"></span>
+    <div class="album-card-inner">
+        <button class="btn-close" onclick="removeAlbumCard(${album.collection_id})" title="Remove from pinned">×</button>
+        <div class="album-index">-</div>
+        <div class="album-info">
+            <div class="album-name">${album.album_name}</div>
+            <div class="album-meta">
+                ${album.artist}
+                <span class="album-year">${album.year}</span>
             </div>
         </div>
-        <div class="log-box" id="log-${album.collection_id}"></div>
-    `;
+        <div class="album-actions">
+            <label class="overwrite-toggle" title="Overwrite if already exists at destination">
+                <input type="checkbox" id="overwrite-${album.collection_id}">
+                <span class="overwrite-label">overwrite</span>
+            </label>
+            <button class="btn btn-upload" id="upload-btn-${album.collection_id}" onclick="uploadAlbum(${album.collection_id})" style="background: var(--accent); color: #000; font-weight: bold;">
+                UPLOAD
+            </button>
+            <button class="btn btn-download" id="dl-btn-${album.collection_id}" onclick="downloadAlbum(${album.collection_id})">
+                1. Download
+            </button>
+            <button class="btn btn-rename" onclick="openRenameModal('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                2. Rename
+            </button>
+            <button class="btn btn-convert" id="conv-btn-${album.collection_id}" onclick="convertAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                3. -> FLAC
+            </button>
+            <button class="btn btn-move" onclick="moveAlbum('${escaped(album.artist)}', '${escaped(album.album_name)}', ${album.collection_id})">
+                4. Move
+            </button>
+            <span class="status-tag" id="status-${album.collection_id}"></span>
+        </div>
+    </div>
+    <div class="log-box" id="log-${album.collection_id}"></div>
+`;
         container.appendChild(card);
+    }
+
+    // Function to remove a pinned album card
+    function removeAlbumCard(collectionId) {
+        // Remove from state
+        pinnedAlbums.delete(collectionId);
+        delete pinnedAlbumsDetails[collectionId];
+        delete downloadLogs[collectionId];
+
+        // Remove from DOM
+        const card = document.getElementById(`album-${collectionId}`);
+        if (card) {
+            card.remove();
+        }
+
+        // Update pinned count
+        document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+
+        // Hide pinned section if empty
+        if (pinnedAlbums.size === 0) {
+            document.getElementById("pinnedSection").style.display = "none";
+        }
+
+        saveState();
     }
 
     async function convertAlbum(artist, albumName, collectionId) {
@@ -1428,7 +1485,6 @@
         renameTarget = null;
     }
 
-
     // Close modal on Escape
     document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
@@ -1436,7 +1492,6 @@
             renameTarget = null;
         }
     });
-
 
     // ALL IN ONE BUTTON TO UPLOAD THE ALBUM (PERFORM ALL 4 STEPS)
     async function uploadAlbum(collectionId) {
@@ -1704,80 +1759,6 @@
         });
     }
 
-    // async function moveAlbumStep(collectionId, artist, albumName, overwrite) {
-    //     return new Promise((resolve, reject) => {
-    //         const logBox = document.getElementById(`log-${collectionId}`);
-    //
-    //         (async () => {
-    //             try {
-    //                 const response = await fetch("${API_BASE_URL}/albums/move-album", {
-    //                     method: "POST",
-    //                     headers: { "Content-Type": "application/json" },
-    //                     credentials: "include",
-    //                     body: JSON.stringify({ artist, album_name: albumName, overwrite })
-    //                 });
-    //
-    //                 const reader = response.body.getReader();
-    //                 const decoder = new TextDecoder();
-    //                 let buffer = "";
-    //
-    //                 while (true) {
-    //                     const { done, value } = await reader.read();
-    //                     if (done) break;
-    //
-    //                     buffer += decoder.decode(value);
-    //                     const lines = buffer.split("\n");
-    //                     buffer = lines.pop() || "";
-    //
-    //                     for (const line of lines) {
-    //                         if (!line.trim().startsWith("data: ")) continue;
-    //
-    //                         const content = line.replace("data: ", "").trim();
-    //                         if (!content) continue;
-    //
-    //                         if (content === "[MOVE][DONE] Album moved successfully!") {
-    //                             // Removing completed items from pinned
-    //                             pinnedAlbums.delete(collectionId);
-    //                             delete pinnedAlbumsDetails[collectionId];
-    //                             delete downloadLogs[collectionId];
-    //
-    //                             // Remove card from pinned section
-    //                             const card = document.getElementById(`album-${collectionId}`);
-    //                             // if (card) {
-    //                             //     card.remove();
-    //                             // }
-    //
-    //                             // Update pinned count
-    //                             const pinnedSection = document.getElementById("pinnedSection");
-    //                             if (pinnedAlbums.size > 0) {
-    //                                 document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
-    //                             } else {
-    //                                 pinnedSection.style.display = "none";
-    //                             }
-    //
-    //                             saveState();
-    //                             resolve();
-    //                             return;
-    //                         }
-    //
-    //                         if (content.startsWith("[ERROR]")) {
-    //                             reject(new Error(content));
-    //                             return;
-    //                         }
-    //
-    //                         logBox.textContent += content + "\n";
-    //                         downloadLogs[collectionId] = logBox.textContent;
-    //                         logBox.scrollTop = logBox.scrollHeight;
-    //                     }
-    //                 }
-    //             } catch (err) {
-    //                 reject(err);
-    //             }
-    //         })();
-    //     });
-    // }
-
-
     async function moveAlbumStep(collectionId, artist, albumName, overwrite) {
         return new Promise((resolve, reject) => {
             const logBox = document.getElementById(`log-${collectionId}`);
@@ -1887,7 +1868,6 @@
             })();
         });
     }
-
 
     document.addEventListener("DOMContentLoaded", () => {
         checkAdmin();
