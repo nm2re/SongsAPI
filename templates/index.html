@@ -170,7 +170,6 @@
             margin-bottom: 2px;
             transition: border-color 0.15s, background 0.15s;
             animation: slideIn 0.3s ease both;
-            position: relative;  /* Add this for absolute positioning of close button */
         }
 
         .album-card:hover {
@@ -190,31 +189,29 @@
             gap: 16px;
         }
 
-        /* New close button styles */
+        /* Close button - left side, matches album index styling */
         .btn-close {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            width: 24px;
-            height: 24px;
+            width: 28px;
+            height: 28px;
             padding: 0;
-            border: none;
-            background: rgba(255, 50, 50, 0.8);
-            color: #fff;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: #ff3333;
             font-size: 18px;
             font-weight: bold;
             cursor: pointer;
-            border-radius: 3px;
+            border-radius: 2px;
             display: flex;
             align-items: center;
             justify-content: center;
             transition: all 0.2s ease;
-            z-index: 10;
+            flex-shrink: 0;
         }
 
         .btn-close:hover {
-            background: rgba(255, 20, 20, 1);
-            transform: scale(1.15);
+            border-color: #ff3333;
+            background: rgba(255, 50, 50, 0.1);
+            color: #ff5555;
         }
 
         .btn-close:active {
