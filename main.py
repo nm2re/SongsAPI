@@ -493,11 +493,13 @@ async def updateYear(body: MetadataRequest):
 def normalize_name(name: str) -> str:
     """Replace any non-alphanumeric characters (except spaces) with underscores, collapse multiples"""
     return re.sub(r'[^a-z0-9 ]+', '_', name.lower()).strip()
+
 @app.post("/albums/convert-flac")
 @app.post(f"{Link.BASE_URL}/albums/convert-flac")
 async def convertToFLAC(body: ConvertRequest):
     expected_name = f"{body.artist} - {body.album_name}"
     normalized_expected = normalize_name(expected_name)
+    normalized_album = normalize_name(body.album_name)
     script_path = Link.DOWNLOAD_DIR / Link.CONVERT_TO_FLAC
 
     async def streamOutput():
@@ -507,22 +509,35 @@ async def convertToFLAC(body: ConvertRequest):
             yield f"data: [CONVERT][ERROR] Could not read download dir: {e}\n\n"
             return
 
-        # 1. Try exact normalized match
+        # 1. Try exact normalized "Artist - Album" match
         folder = next(
             (f for f in folders if normalize_name(f.name) == normalized_expected),
             None
         )
 
-        # 2. Fallback: find folders starting with the artist name, pick most recently modified
+        # 2. Fallback: match any candidate artist name as a prefix, pick most recent
         if folder is None:
-            normalized_artist = normalize_name(body.artist)
+            candidate_names = get_artist_candidates(body.artist)
+            normalized_candidates = [normalize_name(c) for c in candidate_names]
+
             artist_folders = [
                 f for f in folders
-                if normalize_name(f.name).startswith(normalized_artist)
+                if any(normalize_name(f.name).startswith(nc) for nc in normalized_candidates)
             ]
             if artist_folders:
                 folder = max(artist_folders, key=lambda f: f.stat().st_mtime)
                 yield f"data: [CONVERT] Exact match failed, using most recently modified: {folder.name}\n\n"
+
+        # 3. Further fallback: match by album name alone, anywhere in DOWNLOAD_DIR
+        #    (catches the case where the artist folder name is nothing like the credited artist)
+        if folder is None:
+            album_matches = [
+                f for f in folders
+                if normalized_album in normalize_name(f.name) or normalize_name(f.name) in normalized_album
+            ]
+            if album_matches:
+                folder = max(album_matches, key=lambda f: f.stat().st_mtime)
+                yield f"data: [CONVERT] Matched by album name only: {folder.name}\n\n"
 
         if folder is None:
             yield f"data: [CONVERT][ERROR] No matching folder found for: {expected_name}\n\n"
@@ -537,14 +552,6 @@ async def convertToFLAC(body: ConvertRequest):
             for line in stream:
                 loop.call_soon_threadsafe(q.put_nowait, line.rstrip())
             loop.call_soon_threadsafe(q.put_nowait, None)
-
-        # process = subprocess.Popen(
-        #     ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-FolderPath", str(folder)],
-        #     stdout=subprocess.PIPE,
-        #     stderr=subprocess.PIPE,
-        #     text=True,
-        #     bufsize=0
-        # )
 
         process = subprocess.Popen(
             [Link.BASH_URL, str(script_path), str(folder)],
@@ -587,8 +594,12 @@ async def convertToFLAC(body: ConvertRequest):
 @app.post("/albums/move-album")
 @app.post(f"{Link.BASE_URL}/albums/move-album")
 async def moveAlbum(body: ConvertRequest):
+    """
+    Moves the Album from local to OneDrive using rclone
+    """
     expected_name = f"{body.artist} - {body.album_name}"
     normalized_expected = normalize_name(expected_name)
+    normalized_album = normalize_name(body.album_name)
 
     async def streamOutput():
         try:
@@ -603,13 +614,23 @@ async def moveAlbum(body: ConvertRequest):
         )
 
         if source is None:
-            normalized_artist = normalize_name(body.artist)
+            candidate_names = get_artist_candidates(body.artist)
+            normalized_candidates = [normalize_name(c) for c in candidate_names]
+
             artist_folders = [
                 f for f in folders
-                if normalize_name(f.name).startswith(normalized_artist)
+                if any(normalize_name(f.name).startswith(nc) for nc in normalized_candidates)
             ]
             if artist_folders:
                 source = max(artist_folders, key=lambda f: f.stat().st_mtime)
+
+        if source is None:
+            album_matches = [
+                f for f in folders
+                if normalized_album in normalize_name(f.name) or normalize_name(f.name) in normalized_album
+            ]
+            if album_matches:
+                source = max(album_matches, key=lambda f: f.stat().st_mtime)
 
         if source is None:
             yield f"data: [MOVE][ERROR] No matching folder found\n\n"
@@ -623,24 +644,20 @@ async def moveAlbum(body: ConvertRequest):
         try:
             yield f"data: [MOVE] Moving to OneDrive via rclone...\n\n"
 
-            # Use rclone move command instead of cp
-            # This works directly with OneDrive instead of the FUSE mount
             process = await asyncio.create_subprocess_exec(
                 "rclone", "move",
-                str(source),  # Source on local disk
-                f"{Link.RCLONE_DRIVE_MOUNT}/{source.name}",  # OneDrive remote path
+                str(source),
+                f"{Link.RCLONE_DRIVE_MOUNT}/{source.name}",
                 "--verbose",
                 "--transfers=4",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
 
-            # Stream output
             while True:
                 line = await process.stdout.readline()
                 if not line:
                     break
-
                 message = line.decode('utf-8', errors='replace').strip()
                 if message:
                     yield f"data: [MOVE] {message}\n\n"
