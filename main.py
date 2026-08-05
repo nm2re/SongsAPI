@@ -374,24 +374,34 @@ async def update_year(artist: str, album_name: str, year: str):
     Updates the year metadata on all audio files in the album folder.
     Finds the folder by matching against the album name, or uses most recently modified.
     """
-    artist_dir = Link.DOWNLOAD_DIR / artist
-    # Sometimes albums are downloaded into the folder called "Compilations" instead of the artist name, especially if there are multiple artists, so we check that too
+
+    # Sometimes the albums are in a folder called "Compilations" instead of artist name
     compilations_dir = Link.DOWNLOAD_DIR / "Compilations"
 
+    # 1. Try candidate artist directories (handles "Pritam & Sandesh Sandilya" -> "Pritam")
+    candidate_names = get_artist_candidates(artist)
     all_search_dirs = []
 
-    if artist_dir.exists():
-        all_search_dirs.append(artist_dir)
+    for name in candidate_names:
+        d = Link.DOWNLOAD_DIR / name
+        if d.exists() and d.is_dir():
+            all_search_dirs.append(d)
 
     if compilations_dir.exists():
         all_search_dirs.append(compilations_dir)
 
+    # 2. If nothing matched, fall back to scanning every top-level folder
     if not all_search_dirs:
-        yield "[UPDATE_YEAR] Artist directory not found\n\n"
-        # print(f"[UPDATE_YEAR] Neither Artist directory nor Compilations folder found: {artist_dir}, {compilations_dir}")
+        yield f"[UPDATE_YEAR] No artist folder matched {candidate_names}, scanning all top-level folders"
+        try:
+            all_search_dirs = [f for f in Link.DOWNLOAD_DIR.iterdir() if f.is_dir()]
+        except Exception as e:
+            yield f"[UPDATE_YEAR] Error reading {Link.DOWNLOAD_DIR}: {e}"
+            return
 
-
-    # Try to find exact or close match first
+    if not all_search_dirs:
+        yield "[UPDATE_YEAR] No directories found at all"
+        return
 
     all_folders = []
     for search_dir in all_search_dirs:
@@ -400,15 +410,12 @@ async def update_year(artist: str, album_name: str, year: str):
             all_folders.extend(folders)
         except Exception as e:
             yield f"[UPDATE_YEAR] Error reading directory: {search_dir}: {e}"
-            # print(f"[UPDATE_YEAR] Error reading directory: {search_dir}: {e}")
-
 
     if not all_folders:
-        yield "[UPDATE_YEAR] No folders found"
-        print(f"[UPDATE_YEAR] No album folder found")
+        yield "[UPDATE_YEAR] No album folders found"
+        return  # was missing -> caused max() on empty list
 
-
-    # Look for album name match (exact or with _ substitutions)
+    # Look for album name match (exact, sanitized, then normalized substring)
     sanitized_album = album_name.replace(":", "_").replace("?", "_").replace("|", "_").replace('"', "_").replace("<", "_").replace(">", "_").replace("*", "_")
 
     folder = None
@@ -417,14 +424,19 @@ async def update_year(artist: str, album_name: str, year: str):
             folder = f
             break
 
-    # If no match found, use most recently modified folder
+    if not folder:
+        normalized_album = normalize_name(album_name)
+        folder = next(
+            (f for f in all_folders
+             if normalized_album in normalize_name(f.name) or normalize_name(f.name) in normalized_album),
+            None
+        )
+
     if not folder:
         folder = max(all_folders, key=lambda f: f.stat().st_mtime)
         yield f"[UPDATE_YEAR] Using most recent: {folder.name}"
-        print(f"[UPDATE_YEAR] Album name not found, using most recently modified: {folder.name}")
     else:
         yield f"[UPDATE_YEAR] Found: {folder.name}"
-        # print(f"[UPDATE_YEAR] Found matching folder: {folder.name}")
 
     changed = []
     file_count = 0
@@ -433,7 +445,6 @@ async def update_year(artist: str, album_name: str, year: str):
             if file.suffix.lower() in [".flac", ".m4a"]:
                 file_count += 1
                 yield f"[UPDATE_YEAR] Processing {file.name}"
-
                 try:
                     if file.suffix.lower() == ".flac":
                         audio = FLAC(file)
@@ -443,7 +454,6 @@ async def update_year(artist: str, album_name: str, year: str):
                         audio = MP4(file)
                         audio["\xa9day"] = [year]
                         audio.save()
-
                     changed.append(file.name)
                     yield f"[UPDATE_YEAR] Updated {file.name}"
                 except Exception as e:
@@ -457,26 +467,18 @@ async def update_year(artist: str, album_name: str, year: str):
 @app.post(f"{Link.BASE_URL}/albums/metadata/year")
 async def updateYear(body: MetadataRequest):
     """
-    Updates year metadata on audio files in a specific folder.
-    Streams progress via SSE.
+    Updates the year and standardizes the years for albums which have difference release years for tracks eg. singles released and put in an album
     """
     folder = Path(body.folder)
     if not folder.exists():
         raise HTTPException(status_code=404, detail="Folder not found")
 
-    # Extract artist and album name from folder path
-    # Assumes folder structure: "Artist - Album Name"
-    folder_name = folder.name
-    artist = body.artist if hasattr(body, 'artist') else folder_name.split(" - ")[0]
-    album_name = body.album_name if hasattr(body, 'album_name') else folder_name.split(" - ")[1] if " - " in folder_name else folder_name
-
     async def streamOutput():
         yield "data: [METADATA] Starting year update...\n\n"
-
+        yield f"data: [UPDATE_YEAR] Target folder: {folder.name}\n\n"
         try:
-            async for log_message in update_year(artist, album_name, body.year):
+            async for log_message in update_year_in_folder(folder, body.year):
                 yield f"data: {log_message}\n\n"
-
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
@@ -765,9 +767,6 @@ async def moveAlbum(body: ConvertRequest):
 #         media_type="text/event-stream",
 #         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 #     )
-
-
-import re
 
 def get_artist_candidates(artist: str) -> list[str]:
     """Split a multi-artist string into individual candidate names."""
