@@ -337,6 +337,8 @@ class ConvertRequest(BaseModel): # a structure to help write the functions based
     overwrite: bool = False # option to overwrite existing flac files, default is false to prevent accidental overwriting
 
 # --------------------- POST ENDPOINT - DOWNLOAD ---------------------
+
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 @app.post("/albums/download")
 @app.post(f"{Link.BASE_URL}/albums/download")
 async def albumDownload(body: DownloadRequest):
