@@ -10,3 +10,4 @@ argon2-cffi==25.1.0
 uvtools==0.22.1
 httptools==0.8.0
 gamdl==3.8.5
+httpx

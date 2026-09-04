@@ -19,6 +19,7 @@ from starlette.responses import StreamingResponse
 from Secrets import Link
 import os
 
+from amp import amp_get
 from models.database import *
 
 app = FastAPI()
@@ -169,109 +170,206 @@ async def change_user_password(request: Request):
 
 
 
-# --------------------- GET ENDPOINT - SEARCHES AND URL LOOKUPS ---------------------
+# --------------------- GET ENDPOINTS ---------------------
+def _itunes(params: dict) -> list:
+    """
+    Returns the iTunes search API URL
+    """
+    r = requests.get(Link.ITUNES_URL, params={**params, "country": "IN"})
+    return r.json().get("results", [])
+
+
+
+
+# -------------------- AMP ------------------------
+def _album_out(a: dict) -> dict:
+    at = a["attributes"]
+    return {
+        "collection_id": int(a["id"]),
+        "album_name": at["name"],
+        "artist": at.get("artistName", "Unknown"),
+        "apple_music_url": at.get("url", ""),
+        "year": (at.get("releaseDate") or "N/A")[:4],
+        "track_count": at.get("trackCount"),
+        "is_single": at.get("isSingle", False),
+        "is_compilation": at.get("isCompilation", False),
+        "upc": at.get("upc"),
+    }
+
+
+async def amp_search(term: str, limit: int = 25) -> list[dict]:
+    data = await amp_get(
+        f"/v1/catalog/{STOREFRONT}/search",
+        {"term": term, "types": "albums,songs", "limit": limit},
+    )
+    res = data.get("results", {})
+    albums = [_album_out(a) for a in res.get("albums", {}).get("data", [])]
+
+    # pull in albums behind matching songs, deduped
+    seen = {a["collection_id"] for a in albums}
+    for s in res.get("songs", {}).get("data", []):
+        url = s["attributes"].get("url", "")
+        m = re.search(r"/album/[^/]+/(\d+)", url)
+        if m and int(m.group(1)) not in seen:
+            seen.add(int(m.group(1)))
+            alb = await amp_get(f"/v1/catalog/{STOREFRONT}/albums/{m.group(1)}")
+            if alb.get("data"):
+                albums.append(_album_out(alb["data"][0]))
+    return albums
+
+
+async def amp_equivalent(album_id: str) -> dict | None:
+    """Resolve any storefront's album ID into ours."""
+    data = await amp_get(f"/v1/catalog/{STOREFRONT}/albums",
+                         {"filter[equivalents]": album_id})
+    d = data.get("data", [])
+    return _album_out(d[0]) if d else None
+
+
+async def amp_by_upc(upc: str) -> dict | None:
+    data = await amp_get(f"/v1/catalog/{STOREFRONT}/albums", {"filter[upc]": upc})
+    d = data.get("data", [])
+    return _album_out(d[0]) if d else None
+
+
+# --------------------- SEARCH ---------------------
 @app.get("/albums/search")
 @app.get(f"{Link.BASE_URL}/albums/search")
-def searchAlbum(q: str, limit: int = 50):
+async def searchAlbum(q: str, limit: int = 25):
+    try:
+        albums = await amp_search(q, limit)
+    except Exception as e:
+        print(f"[SEARCH] AMP failed ({e}), falling back to iTunes")
+        return searchAlbumItunes(q, limit)      # existing backup search for fallback
+    return {"results": [{**a, "index": i} for i, a in enumerate(albums)]}
+
+
+
+def searchAlbumItunes(q: str, limit: int = 50):
     """
     Used to search for albums using the iTunes Search API.
     Returns a list of albums with their collection id, name, artist and apple music url
     which will be used for downloading the album later.
     """
+    results = _itunes({"term": q, "entity": "album", "media": "music", "limit": limit})
 
-    response = requests.get(Link.ITUNES_URL, params={"term": q, "entity": "album", "media": "music","limit": limit})
-    results = response.json().get("results", [])
-
-    # If no results, try removing special characters
+    # Fallback 1: strip special characters
     if not results:
-        cleaned_query = "".join(c if c.isalnum() or c.isspace() else "" for c in q).strip()
-        if cleaned_query and cleaned_query != q:
-            print(f"[SEARCH] No results for '{q}', trying cleaned: '{cleaned_query}'")
-            response = requests.get(Link.ITUNES_URL, params={
-                "term": cleaned_query,
-                "entity": "album",
-                "limit": limit
-            })
+        cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in q).strip()
+        if cleaned and cleaned != q:
+            print(f"[SEARCH] no hits for '{q}', retrying cleaned: '{cleaned}'")
+            results = _itunes({"term": cleaned, "entity": "album", "media": "music", "limit": limit})
 
-    results = response.json().get("results", []) # returns blank [] if there are no results
-
-
-    if not results and " by " in q:
-        artist = q.split(" by ")[-1].strip()
-        print(f"[SEARCH] No results for '{q}', trying artist: '{artist}'")
-        response = requests.get(Link.ITUNES_URL, params={
-            "term": artist,
-            "entity": "album",
-            "limit": limit,
-        })
-        results = response.json().get("results", [])
-
+    # Fallback 2: search songs, map back to their albums
+    if not results:
+        print(f"[SEARCH] no album hits for '{q}', trying song search")
+        songs = _itunes({"term": q, "entity": "song", "media": "music", "limit": limit})
+        seen, ids = set(), []
+        for s in songs:
+            cid = s.get("collectionId")
+            if cid and cid not in seen:
+                seen.add(cid)
+                ids.append(str(cid))
+        if ids:
+            r = requests.get("https://itunes.apple.com/lookup",
+                             params={"id": ",".join(ids[:25]), "country": "IN"})
+            results = [x for x in r.json().get("results", [])
+                       if x.get("wrapperType") == "collection"]
 
     albums = []
-    for i, album in enumerate(results):
-        if album.get("collectionType") != "Album":
+    for album in results:
+        if not album.get("collectionId") or not album.get("collectionName"):
             continue
         albums.append({
             "index": len(albums),
             "collection_id": album["collectionId"],
             "album_name": album["collectionName"],
-            "artist": album["artistName"],
-            "apple_music_url": album["collectionViewUrl"],
-            "year": album["releaseDate"][:4] if album.get("releaseDate") else "N/A"
+            "artist": album.get("artistName", "Unknown"),
+            "apple_music_url": album.get("collectionViewUrl", ""),
+            "year": album["releaseDate"][:4] if album.get("releaseDate") else "N/A",
+            "track_count": album.get("trackCount"),
         })
     return {"results": albums}
 
+
+
+# --------------------- URL LOOKUPS ---------------------
 @app.get("/albums/lookup")
 @app.get(f"{Link.BASE_URL}/albums/lookup")
-def urlAlbumLookup(url: str, collection_id: int = None):
+async def urlAlbumLookup(url: str = None, collection_id: int = None):
     """
-    If the search function does not result in the album that you want to download, the directly search the URL
-    Lookup album directly from an Apple Music URL.
-    Supports region-specific storefronts.
-
+    Lookup an album from an Apple Music URL or a raw collection ID.
+    Any storefront's URL is accepted — the ID is resolved to the account's
+    storefront so gamdl can actually fetch it.
     """
+    if not url and not collection_id:
+        raise HTTPException(status_code=400, detail="url or collection_id required")
 
     if url and not collection_id:
+        match = re.search(r"/album/[^/]+/(\d+)", url)
+        if not match:
+            raise HTTPException(status_code=400, detail="Invalid Apple Music album URL")
+        collection_id = int(match.group(1))
 
-        parts = url.rstrip("/").split("/")
-
-        try:
-            country = parts[3]  # music.apple.com/in/...
-            collection_id = int(parts[-1])
-        except (ValueError, IndexError):
-            raise HTTPException(status_code=400, detail="Invalid URL Format")
-
-        response = requests.get(
-            "https://itunes.apple.com/lookup",
-            params={
-                "id": collection_id,
-                "entity": "album",
-                "country": country
-            }
+    album = await amp_equivalent(str(collection_id))
+    if not album:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Album {collection_id} is not available in the "
+                   f"'{STOREFRONT}' storefront",
         )
+    return album
 
-        results = response.json().get("results", [])
 
-        album = next(
-            (r for r in results if r.get("wrapperType") == "collection"),
-            None
-        )
-
-        if not album:
-            raise HTTPException(status_code=404, detail="Album not found")
-
-        return {
-            "collection_id": album["collectionId"],
-            "album_name": album["collectionName"],
-            "artist": album["artistName"],
-            "apple_music_url": album["collectionViewUrl"],
-            "year": album["releaseDate"][:4]
-            if album.get("releaseDate")
-            else "N/A",
-            "country": country
-        }
-
-    return None
+# def urlAlbumLookup(url: str, collection_id: int = None):
+#     """
+#     If the search function does not result in the album that you want to download, the directly search the URL
+#     Lookup album directly from an Apple Music URL.
+#     Supports region-specific storefronts.
+#
+#     """
+#
+#     if url and not collection_id:
+#
+#         parts = url.rstrip("/").split("/")
+#
+#         try:
+#             country = parts[3]  # music.apple.com/in/...
+#             collection_id = int(parts[-1])
+#         except (ValueError, IndexError):
+#             raise HTTPException(status_code=400, detail="Invalid URL Format")
+#
+#         response = requests.get(
+#             "https://itunes.apple.com/lookup",
+#             params={
+#                 "id": collection_id,
+#                 "entity": "album",
+#                 "country": country
+#             }
+#         )
+#
+#         results = response.json().get("results", [])
+#
+#         album = next(
+#             (r for r in results if r.get("wrapperType") == "collection"),
+#             None
+#         )
+#
+#         if not album:
+#             raise HTTPException(status_code=404, detail="Album not found")
+#
+#         return {
+#             "collection_id": album["collectionId"],
+#             "album_name": album["collectionName"],
+#             "artist": album["artistName"],
+#             "apple_music_url": album["collectionViewUrl"],
+#             "year": album["releaseDate"][:4]
+#             if album.get("releaseDate")
+#             else "N/A",
+#             "country": country
+#         }
+#
+#     return None
 
 
 # --------------------- REQUEST CLASSES ---------------------
@@ -686,108 +784,6 @@ async def moveAlbum(body: ConvertRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
-
-# @app.post('/albums/rename-folder')
-# @app.post(f"{Link.BASE_URL}/albums/rename-folder")
-# async def renameFolder(body: ConvertRequest):
-#     new_artist = body.new_artist or body.artist
-#     new_album = body.new_album_name or body.album_name
-#
-#     artist_dir = Link.DOWNLOAD_DIR / body.artist
-#     compilations_dir = Link.DOWNLOAD_DIR / "Compilations"
-#
-#     new_folder_name = Link.DOWNLOAD_DIR / f"{new_artist} - {new_album}"
-#
-#     async def streamOutput():
-#         # Check both artist and compilations directories
-#         all_search_dirs = []
-#         if artist_dir.exists():
-#             all_search_dirs.append(artist_dir)
-#
-#         if compilations_dir.exists():
-#             all_search_dirs.append(compilations_dir)
-#
-#         if not all_search_dirs:
-#             yield f"data: [RENAME][ERROR] Artist directory not found: {artist_dir}\n\n"
-#             return
-#
-#         # Collect all folders from both directories
-#         all_folders = []
-#         for search_dir in all_search_dirs:
-#             try:
-#                 folders = [f for f in search_dir.iterdir() if f.is_dir()]
-#                 all_folders.extend(folders)
-#             except Exception as e:
-#                 yield f"data: [RENAME][ERROR] Could not read {search_dir}: {e}\n\n"
-#                 return
-#
-#         if not all_folders:
-#             yield f"data: [RENAME][ERROR] No album folders found\n\n"
-#             return
-#
-#         # Try to find matching folder
-#         source = None
-#
-#         # First try: exact match with normalized name
-#         if hasattr(locals(), 'normalize_name'):
-#             normalized_album = normalize_name(body.album_name)
-#             source = next(
-#                 (f for f in all_folders if normalize_name(f.name) == normalized_album),
-#                 None
-#             )
-#
-#             # Second try: match new album name (for re-renames)
-#             if source is None:
-#                 source = next(
-#                     (f for f in all_folders if normalize_name(f.name) == normalize_name(new_album)),
-#                     None
-#                 )
-#
-#         # Fallback: use most recently modified folder
-#         if source is None:
-#             source = max(all_folders, key=lambda f: f.stat().st_mtime)
-#             yield f"data: [RENAME] No exact match found, using most recent: {source.name}\n\n"
-#         else:
-#             yield f"data: [RENAME] Found: {source.name}\n\n"
-#
-#         yield f"data: [RENAME] Renaming to: {new_folder_name.name}\n\n"
-#
-#         max_retries = 5
-#         for attempt in range(max_retries):
-#             try:
-#                 yield f"data: [RENAME] Attempt {attempt + 1}: Renaming...\n\n"
-#                 shutil.move(str(source), str(new_folder_name))
-#
-#                 # Clean up empty directories
-#                 try:
-#                     if source.parent.exists() and source.parent != Link.DOWNLOAD_DIR:
-#                         if not any(source.parent.iterdir()):
-#                             source.parent.rmdir()
-#                             yield f"data: [RENAME] Removed empty parent directory\n\n"
-#                 except Exception:
-#                     pass
-#
-#                 yield f"data: [RENAME] Album has been renamed to : {new_folder_name.name}\n\n"
-#                 yield "data: [RENAME][DONE]\n\n"
-#                 return
-#
-#             except PermissionError:
-#                 if attempt < max_retries - 1:
-#                     yield f"data: [RENAME][ERROR] File locked (attempt {attempt + 1}/{max_retries}), retrying in 2s...\n\n"
-#                     await asyncio.sleep(2)
-#                 else:
-#                     yield f"data: [RENAME][ERROR] Permission denied after {max_retries} attempts. Close file explorer and try again.\n\n"
-#                     return
-#
-#             except Exception as e:
-#                 yield f"data: [RENAME][ERROR] {type(e).__name__}: {str(e)}\n\n"
-#                 return
-#
-#     return StreamingResponse(
-#         streamOutput(),
-#         media_type="text/event-stream",
-#         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-#     )
 
 def get_artist_candidates(artist: str) -> list[str]:
     """Split a multi-artist string into individual candidate names."""
