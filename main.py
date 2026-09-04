@@ -339,88 +339,212 @@ class ConvertRequest(BaseModel): # a structure to help write the functions based
 # --------------------- POST ENDPOINT - DOWNLOAD ---------------------
 @app.post("/albums/download")
 @app.post(f"{Link.BASE_URL}/albums/download")
-async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
-    """
-    Selected albums will be downloaded using gamdl which is a command line tool that can download albums from Apple Music.
-    """
-    match = None
-    for album in body.results:
-        if album["collection_id"] == body.collection_id:
-            match = album
-            break
-
+async def albumDownload(body: DownloadRequest):
+    match = next(
+        (a for a in body.results if a["collection_id"] == body.collection_id),
+        None,
+    )
     if match is None:
         raise HTTPException(status_code=404, detail="Album not found")
 
     url = match["apple_music_url"]
+    expected_tracks = match.get("track_count")
 
     async def streamOutput():
+        process = None
+        try:
+            process = subprocess.Popen(
+                ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper",
+                 "--wrapper-url", Link.WRAPPER_URL,
+                 "--wrapper-decrypt-host", Link.WRAPPER_DECRYPT_HOST,
+                 "--wrapper-decrypt-port", str(Link.WRAPPER_DECRYPT_PORT),
+                 "--output-path", str(Link.DOWNLOAD_DIR), url],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,                      # line buffered — correct for text mode
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
 
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8"} # encoding for special characters in album
+            q = queue.Queue()
 
-        process = subprocess.Popen( # args containing wrapper elements
-            ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper",
-             "--wrapper-url", Link.WRAPPER_URL,
-             "--wrapper-decrypt-host", Link.WRAPPER_DECRYPT_HOST,
-             "--wrapper-decrypt-port", str(Link.WRAPPER_DECRYPT_PORT),
-             "--output-path", str(Link.DOWNLOAD_DIR), url],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            bufsize=0,  # 0 buffering
-            env=env
-        )
+            def enqueue(stream, label):
+                try:
+                    for line in stream:
+                        stripped = ANSI_RE.sub("", line.rstrip())
+                        if stripped and not stripped.startswith("[download]"):
+                            q.put((label, stripped))
+                finally:
+                    q.put((label, None))        # sentinel always sent, even on error
 
-        q = queue.Queue()
-        def enqueue(stream, label):
-            for line in stream:
-                stripped = line.rstrip()
-                if not stripped.startswith("[download]"):
-                    q.put((label,stripped))
-            q.put((label, None))
+            t1 = threading.Thread(target=enqueue, args=(process.stdout, "stdout"), daemon=True)
+            t2 = threading.Thread(target=enqueue, args=(process.stderr, "stderr"), daemon=True)
+            t1.start()
+            t2.start()
 
-        t1 = threading.Thread(target=enqueue, args=(process.stdout, "stdout"))
-        t2 = threading.Thread(target=enqueue, args=(process.stderr, "stderr"))
+            finished = 0
+            errors_seen = 0
+            while finished < 2:
+                try:
+                    label, line = q.get(timeout=1)
+                except queue.Empty:
+                    if process.poll() is not None and not t1.is_alive() and not t2.is_alive():
+                        break                   # process gone, readers done
+                    continue
 
-        t1.start()
-        t2.start()
+                if line is None:
+                    finished += 1
+                    continue
 
-        finished = 0
-        while finished < 2:  # if thread is still running
-            label, line = q.get()
-            if line is None:
-                finished += 1
-                continue
-            print(f"[{label}] {line}", flush=True)  # Debug to terminal
-            yield f"data: {line}\n\n"  # Send line to client as SSE
-            await asyncio.sleep(0)
-        t1.join()
-        t2.join()
-        process.wait()
+                if "Error downloading" in line or line.startswith("Traceback"):
+                    errors_seen += 1
 
-        print(f"[gamdl exited with code {process.returncode}]\n\n")
+                print(f"[{label}] {line}", flush=True)
+                yield f"data: {line}\n\n"
+                await asyncio.sleep(0)
 
-        if process.returncode == 0:
-            # folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
+            t1.join(timeout=5)
+            t2.join(timeout=5)
+            process.wait(timeout=30)
+            print(f"[gamdl exited with code {process.returncode}]", flush=True)
+
+            if process.returncode != 0:
+                yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
+                return
+
+            # gamdl exits 0 even when every track failed — verify files exist
+            files = list(Link.DOWNLOAD_DIR.rglob("*.m4a")) + \
+                    list(Link.DOWNLOAD_DIR.rglob("*.flac"))
+            if not files:
+                yield "data: [ERROR] gamdl reported success but no files were downloaded\n\n"
+                return
+            if errors_seen:
+                yield f"data: [WARNING] {errors_seen} track(s) failed\n\n"
+            if expected_tracks:
+                yield f"data: [INFO] {len(files)} file(s) present, album lists {expected_tracks} track(s)\n\n"
+
             try:
-                yield "data: [METADATA] Updating Year Metadata.../n/n"
-
-                # Running the update_year in a thread pool to avoid blocking the main event loop
-                async for log_message in update_year(match["artist"], match["album_name"], match["year"]):
-                    yield f"data: {log_message}\n\n"
+                yield "data: [METADATA] Updating Year Metadata...\n\n"
+                async for msg in update_year(match["artist"], match["album_name"], match["year"]):
+                    yield f"data: {msg}\n\n"
                 yield "data: [METADATA][UPDATE YEAR] Year Updated!\n\n"
-                yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
-
             except Exception as e:
-                print(f"[ERROR] Metadata update failed: {e}")
-                yield f"data: [WARNING] Metadata update failed: {str(e)}\n\n"
-        else:
-            yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
-    return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                print(f"[ERROR] metadata update failed: {e}", flush=True)
+                yield f"data: [WARNING] Metadata update failed: {e}\n\n"
+
+            yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
+
+            yield "data: [DONE]\n\n"          # always terminal, even after metadata failure
+
+        except asyncio.CancelledError:
+            # client disconnected — don't leave gamdl running
+            if process and process.poll() is None:
+                process.kill()
+                print("[gamdl] killed after client disconnect", flush=True)
+            raise
+        except Exception as e:
+            print(f"[ERROR] download stream failed: {type(e).__name__}: {e}", flush=True)
+            yield f"data: [ERROR] {type(e).__name__}: {e}\n\n"
+        finally:
+            if process and process.poll() is None:
+                process.kill()
+
+    return StreamingResponse(
+        streamOutput(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+
+# async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
+#     """
+#     Selected albums will be downloaded using gamdl which is a command line tool that can download albums from Apple Music.
+#     """
+#     match = None
+#     for album in body.results:
+#         if album["collection_id"] == body.collection_id:
+#             match = album
+#             break
+#
+#     if match is None:
+#         raise HTTPException(status_code=404, detail="Album not found")
+#
+#     url = match["apple_music_url"]
+#
+#     async def streamOutput():
+#
+#         env = {**os.environ, "PYTHONIOENCODING": "utf-8"} # encoding for special characters in album
+#
+#         process = subprocess.Popen( # args containing wrapper elements
+#             ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper",
+#              "--wrapper-url", Link.WRAPPER_URL,
+#              "--wrapper-decrypt-host", Link.WRAPPER_DECRYPT_HOST,
+#              "--wrapper-decrypt-port", str(Link.WRAPPER_DECRYPT_PORT),
+#              "--output-path", str(Link.DOWNLOAD_DIR), url],
+#             stdout=subprocess.PIPE,
+#             stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
+#             text=True,
+#             encoding='utf-8',
+#             errors='replace',
+#             bufsize=0,  # 0 buffering
+#             env=env
+#         )
+#
+#         q = queue.Queue()
+#         def enqueue(stream, label):
+#             for line in stream:
+#                 stripped = line.rstrip()
+#                 if not stripped.startswith("[download]"):
+#                     q.put((label,stripped))
+#             q.put((label, None))
+#
+#         t1 = threading.Thread(target=enqueue, args=(process.stdout, "stdout"))
+#         t2 = threading.Thread(target=enqueue, args=(process.stderr, "stderr"))
+#
+#         t1.start()
+#         t2.start()
+#
+#         finished = 0
+#         while finished < 2:  # if thread is still running
+#             label, line = q.get()
+#             if line is None:
+#                 finished += 1
+#                 continue
+#             print(f"[{label}] {line}", flush=True)  # Debug to terminal
+#             yield f"data: {line}\n\n"  # Send line to client as SSE
+#             await asyncio.sleep(0)
+#         t1.join()
+#         t2.join()
+#         process.wait()
+#
+#         print(f"[gamdl exited with code {process.returncode}]\n\n")
+#
+#         if process.returncode == 0:
+#             # folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
+#             try:
+#                 yield "data: [METADATA] Updating Year Metadata.../n/n"
+#
+#                 # Running the update_year in a thread pool to avoid blocking the main event loop
+#                 async for log_message in update_year(match["artist"], match["album_name"], match["year"]):
+#                     yield f"data: {log_message}\n\n"
+#                 yield "data: [METADATA][UPDATE YEAR] Year Updated!\n\n"
+#                 yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
+#
+#             except Exception as e:
+#                 print(f"[ERROR] Metadata update failed: {e}")
+#                 yield f"data: [WARNING] Metadata update failed: {str(e)}\n\n"
+#         else:
+#             yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
+#     return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 # --------------------- POST ENDPOINT - METADATA (YEAR) ---------------------
+
+
+
+
 async def update_year(artist: str, album_name: str, year: str):
     """
     Updates the year metadata on all audio files in the album folder.
