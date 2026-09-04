@@ -311,7 +311,11 @@ async def albumDownload(body: DownloadRequest): # async functions important for 
         env = {**os.environ, "PYTHONIOENCODING": "utf-8"} # encoding for special characters in album
 
         process = subprocess.Popen( # args containing wrapper elements
-            ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper", "--wrapper-account-url", Link.WRAPPER_ACCOUNT_URL, "--wrapper-m3u8-ip", Link.WRAPPER_M3U8_IP, "--wrapper-decrypt-ip", Link.WRAPPER_DECRYPT_IP, "--output-path", Link.DOWNLOAD_DIR, url],
+            ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper",
+             "--wrapper-url", Link.WRAPPER_URL,
+             "--wrapper-decrypt-host", Link.WRAPPER_DECRYPT_HOST,
+             "--wrapper-decrypt-port", str(Link.WRAPPER_DECRYPT_PORT),
+             "--output-path", str(Link.DOWNLOAD_DIR), url],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
             text=True,
