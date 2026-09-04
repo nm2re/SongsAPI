@@ -704,6 +704,51 @@
 </div>
 
 <script>
+    const MAX_LOG_LINES = 400;
+
+    // Terminal-message matching — tolerant of any [PREFIX] before [DONE]/[ERROR]
+    const isDone  = (c) => c.includes("[DONE]");
+    const isError = (c) => c.includes("[ERROR]");
+
+    // Append a log line, trimming old lines so the string can't grow unbounded
+    function appendLog(collectionId, text) {
+        const box = document.getElementById(`log-${collectionId}`);
+        if (!box) return;
+        box.textContent += text + "\n";
+        const lines = box.textContent.split("\n");
+        if (lines.length > MAX_LOG_LINES) {
+            box.textContent = lines.slice(-MAX_LOG_LINES).join("\n");
+        }
+        downloadLogs[collectionId] = box.textContent;
+        box.scrollTop = box.scrollHeight;
+        saveStateDebounced();
+    }
+
+    // Debounced persist — saveState() serialises every log object, so calling it
+    // per line was thousands of full JSON writes per download
+    let _saveTimer = null;
+    function saveStateDebounced() {
+        clearTimeout(_saveTimer);
+        _saveTimer = setTimeout(saveState, 1000);
+    }
+
+    // Shared teardown when an album finishes and leaves the pinned section
+    function completeAndUnpin(collectionId) {
+        pinnedAlbums.delete(collectionId);
+        delete pinnedAlbumsDetails[collectionId];
+        delete downloadLogs[collectionId];
+
+        const card = document.querySelector(`#pinnedDownloads #album-${collectionId}`);
+        if (card) card.remove();
+
+        document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
+        if (pinnedAlbums.size === 0) {
+            document.getElementById("pinnedSection").style.display = "none";
+        }
+        saveState();
+    }
+
+
     const API_BASE_URL = '/songs-api';
     let currentDownloads = {};
 
@@ -1066,31 +1111,26 @@
                 const content = trimmed.replace("data: ", "").trim();
                 if (!content) continue;
 
-                if (content === "[DONE]") {
+                appendLog(collectionId, content);
+
+                if (isError(content)) {
+                    statusEl.className = "status-tag error";
+                    statusEl.textContent = "Error";
+                    updateDownloadStatus(collectionId, "error");
+                    btn.disabled = false;
+                    saveState();
+                    return;
+                }
+
+                if (isDone(content)) {
                     statusEl.className = "status-tag done";
                     statusEl.textContent = "Downloaded";
                     btn.disabled = false;
                     updateDownloadStatus(collectionId, "done");
-                    saveState();
                     showActions(collectionId);
-                    return;
-                }
-
-                if (content.startsWith("[ERROR]")) {
-                    statusEl.className = "status-tag error";
-                    statusEl.textContent = "Error";
-                    updateDownloadStatus(collectionId, "error");
-                    logBox.textContent += content + "\n";
-                    downloadLogs[collectionId] = logBox.textContent;
                     saveState();
-                    btn.disabled = false;
                     return;
                 }
-
-                logBox.textContent += content + "\n";
-                downloadLogs[collectionId] = logBox.textContent;
-                saveState();
-                logBox.scrollTop = logBox.scrollHeight;
             }
         }
     }
@@ -1268,9 +1308,10 @@
 
     async function moveAlbum(artist, albumName, collectionId) {
         const statusEl = document.getElementById(`status-${collectionId}`);
-        const logBox   = document.getElementById(`log-${collectionId}`);
+        const logBox = document.getElementById(`log-${collectionId}`);
         const overwrite = document.getElementById(`overwrite-${collectionId}`).checked;
 
+        logBox.style.display = "block";
         statusEl.className = "status-tag moving";
         statusEl.textContent = "Moving...";
 
@@ -1279,85 +1320,64 @@
             updateDownloadsPanel();
         }
 
-        const response = await fetch(`${API_BASE_URL}/albums/move-album`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ artist, album_name: albumName, overwrite })
-        });
+        try {
+            const response = await fetch(`${API_BASE_URL}/albums/move-album`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ artist, album_name: albumName, overwrite })
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let finished = false;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-            const text = decoder.decode(value);
-            const lines = text.split("\n").filter(l => l.startsWith("data: "));
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
 
-            for (const line of lines) {
-                const content = line.replace("data: ", "").trim();
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed.startsWith("data: ")) continue;
+                    const content = trimmed.replace("data: ", "").trim();
+                    if (!content) continue;
 
-                if (content === "[DONE]") {
-                    statusEl.className = "status-tag done";
-                    statusEl.textContent = "Moved";
+                    appendLog(collectionId, content);
 
-                    // Remove from active downloads, add to completed in panel
-                    if (currentDownloads[collectionId]) {
-                        const dl = currentDownloads[collectionId];
-                        // delete currentDownloads[collectionId];
-
-                        const list = document.getElementById("downloadsList");
-                        const completed = document.createElement("div");
-                        completed.className = "download-item";
-                        completed.innerHTML = `
-                        <div class="download-item-title">${dl.albumName}</div>
-                        <div class="download-item-artist">${dl.artist}</div>
-                        <div class="download-item-progress" style="color: var(--green);">MOVED TO VAULT</div>
-                    `;
-                        // Prepend so it appears at the top
-                        list.insertBefore(completed, list.firstChild);
-                        document.getElementById("downloadCount").textContent = Object.keys(currentDownloads).length;
+                    if (isError(content)) {
+                        finished = true;
+                        statusEl.className = "status-tag error";
+                        statusEl.textContent = "Error";
+                        updateDownloadStatus(collectionId, "error");
+                        saveState();
+                        return;
                     }
 
-                    // Remove the items from the pinned section
-                    const pinnedCard = document.querySelector(`#pinnedDownloads #album-${collectionId}`);
-                    if (pinnedCard) pinnedCard.remove();
-
-                    pinnedAlbums.delete(collectionId);
-                    delete pinnedAlbumsDetails[collectionId];
-                    delete downloadLogs[collectionId];
-
-                    if (pinnedAlbums.size === 0) {
-                        document.getElementById("pinnedSection").style.display = "none";
+                    if (isDone(content)) {
+                        finished = true;
+                        statusEl.className = "status-tag done";
+                        statusEl.textContent = "Moved";
+                        updateDownloadStatus(collectionId, "moved");
+                        completeAndUnpin(collectionId);
+                        return;
                     }
-                    document.getElementById("pinnedCount").textContent = pinnedAlbums.size;
-
-                    if (logBox) {
-                        logBox.textContent += "[MOVE] Complete\n";
-                        downloadLogs[collectionId] = logBox.textContent;
-                    }
-                    saveState();
-                    return;
-                }
-
-                if (content.startsWith("[ERROR]")) {
-                    statusEl.className = "status-tag error";
-                    statusEl.textContent = "Error";
-
-                    if (currentDownloads[collectionId]) {
-                        currentDownloads[collectionId].status = "error";
-                        updateDownloadsPanel();
-                    }
-
-                    if (logBox) {
-                        logBox.textContent += content + "\n";
-                        downloadLogs[collectionId] = logBox.textContent;
-                    }
-                    saveState();
-                    return;
                 }
             }
+
+            if (!finished) throw new Error("Stream ended without a completion message");
+
+        } catch (err) {
+            statusEl.className = "status-tag error";
+            statusEl.textContent = "Error";
+            appendLog(collectionId, `[ERROR] ${err.message}`);
+            updateDownloadStatus(collectionId, "error");
+            saveState();
         }
     }
 
