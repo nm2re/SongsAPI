@@ -19,7 +19,7 @@ from starlette.responses import StreamingResponse
 from Secrets import Link
 import os
 
-from amp import amp_get
+from amp import amp_search, amp_equivalent, amp_by_upc, STOREFRONT
 from models.database import *
 
 app = FastAPI()
@@ -179,68 +179,18 @@ def _itunes(params: dict) -> list:
     return r.json().get("results", [])
 
 
-
-
-# -------------------- AMP ------------------------
-def _album_out(a: dict) -> dict:
-    at = a["attributes"]
-    return {
-        "collection_id": int(a["id"]),
-        "album_name": at["name"],
-        "artist": at.get("artistName", "Unknown"),
-        "apple_music_url": at.get("url", ""),
-        "year": (at.get("releaseDate") or "N/A")[:4],
-        "track_count": at.get("trackCount"),
-        "is_single": at.get("isSingle", False),
-        "is_compilation": at.get("isCompilation", False),
-        "upc": at.get("upc"),
-    }
-
-
-async def amp_search(term: str, limit: int = 25) -> list[dict]:
-    data = await amp_get(
-        f"/v1/catalog/{STOREFRONT}/search",
-        {"term": term, "types": "albums,songs", "limit": limit},
-    )
-    res = data.get("results", {})
-    albums = [_album_out(a) for a in res.get("albums", {}).get("data", [])]
-
-    # pull in albums behind matching songs, deduped
-    seen = {a["collection_id"] for a in albums}
-    for s in res.get("songs", {}).get("data", []):
-        url = s["attributes"].get("url", "")
-        m = re.search(r"/album/[^/]+/(\d+)", url)
-        if m and int(m.group(1)) not in seen:
-            seen.add(int(m.group(1)))
-            alb = await amp_get(f"/v1/catalog/{STOREFRONT}/albums/{m.group(1)}")
-            if alb.get("data"):
-                albums.append(_album_out(alb["data"][0]))
-    return albums
-
-
-async def amp_equivalent(album_id: str) -> dict | None:
-    """Resolve any storefront's album ID into ours."""
-    data = await amp_get(f"/v1/catalog/{STOREFRONT}/albums",
-                         {"filter[equivalents]": album_id})
-    d = data.get("data", [])
-    return _album_out(d[0]) if d else None
-
-
-async def amp_by_upc(upc: str) -> dict | None:
-    data = await amp_get(f"/v1/catalog/{STOREFRONT}/albums", {"filter[upc]": upc})
-    d = data.get("data", [])
-    return _album_out(d[0]) if d else None
-
-
 # --------------------- SEARCH ---------------------
 @app.get("/albums/search")
 @app.get(f"{Link.BASE_URL}/albums/search")
 async def searchAlbum(q: str, limit: int = 25):
     try:
         albums = await amp_search(q, limit)
+        print(f"[SEARCH] AMP returned {len(albums)} albums for '{q}'")
     except Exception as e:
-        print(f"[SEARCH] AMP failed ({e}), falling back to iTunes")
-        return searchAlbumItunes(q, limit)      # existing backup search for fallback
+        import traceback
+        print(f"[SEARCH] AMP FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return searchAlbumItunes(q, limit)
     return {"results": [{**a, "index": i} for i, a in enumerate(albums)]}
 
 
