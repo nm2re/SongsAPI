@@ -188,7 +188,7 @@ async def searchAlbum(q: str, limit: int = 25):
         print(f"[SEARCH] AMP returned {len(albums)} albums for '{q}'")
     except Exception as e:
         import traceback
-        print(f"[SEARCH] AMP FAILED: {type(e).__name__}: {e}")
+        print(f"[SEARCH] AMP FAILED: {type(e).__name__}: {e}), using iTunes search as fallback")
         traceback.print_exc()
         return searchAlbumItunes(q, limit)
     return {"results": [{**a, "index": i} for i, a in enumerate(albums)]}
