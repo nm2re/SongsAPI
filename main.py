@@ -5,6 +5,8 @@ import shutil
 import threading
 import time
 from pathlib import Path
+
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 import requests
@@ -354,6 +356,14 @@ async def albumDownload(body: DownloadRequest):
 
     async def streamOutput():
         process = None
+        try:
+            # Check for the first track failing to download
+            async with httpx.AsyncClient() as client:
+                await client.get(f"{Link.WRAPPER_URL}/me")
+
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[WARMUP] Wrapper pinging failed: {e}")
         try:
             process = subprocess.Popen(
                 ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper",
