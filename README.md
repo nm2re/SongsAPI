@@ -1,39 +1,74 @@
-# A SongsAPI, ReVault
+# RE;VAULT — SongsAPI
 
-A full-stack web application that automates downloading, organizing, and converting Apple Music albums to FLAC format. Download albums via iTunes search or direct Apple Music URLs, automatically rename folders, convert to lossless FLAC, and sync to OneDrive with a single click.
+A full-stack web application that automates downloading, organizing, and converting
+Apple Music albums to FLAC. Search the Apple Music catalog or paste a link from any
+region, download losslessly through a self-hosted decryption wrapper, auto-rename and
+convert to FLAC, and sync to cloud storage — driven from one dark-themed web UI with
+real-time progress.
+
+Built and deployed solo on an ARM64 VPS.
 
 ## Features
 
-- **iTunes Integration**: Search albums with fallback logic for special characters and direct URL lookup
-- **One-Click Upload**: Orchestrates complete workflow (download → rename → convert → move) with real-time progress
-- **Individual Controls**: Perform any step independently for maximum flexibility
-- **Smart Organization**: Auto-rename folders to `Artist - Album` format with special character handling
-- **FLAC Conversion**: Convert M4A to FLAC losslessly via FFmpeg
-- **OneDrive Sync**: Move albums directly to OneDrive via rclone, bypassing FUSE mount issues
-- **Metadata Management**: Auto-update year and tags on all audio files
-- **Persistent State**: localStorage saves search results, logs, and album pins across reloads
-- **Real-time Streaming**: SSE-based progress updates for all operations
-- **User Management**: SQLite authentication with admin panel for user CRUD
-- **Session Auth**: Secure session-based authentication with argon2 password hashing
+- **Apple Music catalog search** — uses the same AMP catalog API as the Apple Music
+  app (not the legacy iTunes Search API), searching albums *and* songs so singles and
+  album tracks both surface. Falls back to iTunes search if the AMP token can't be fetched.
+- **Any-region URL lookup** — paste a `/us/`, `/jp/`, `/gb/` (etc.) Apple Music album
+  URL and it resolves to your account's storefront automatically via `filter[equivalents]`,
+  so gamdl can actually fetch it.
+- **One-click Upload** — orchestrates the full workflow (download → rename → convert → move)
+  with live SSE progress.
+- **Individual controls** — run any step on its own.
+- **Smart organization** — auto-renames folders to `Artist - Album`, handling
+  Windows-illegal characters and albums that land in `Compilations/`.
+- **Lossless FLAC conversion** — parallel FFmpeg transcode from ALAC.
+- **Cloud sync** — moves finished albums via `rclone move` (bypasses FUSE-mount I/O errors).
+- **Metadata** — auto-updates year tags on all tracks.
+- **Persistent UI state** — localStorage keeps search results, logs, and pinned albums
+  across reloads (logs capped to avoid unbounded growth).
+- **Auth** — SQLite users, session cookies, argon2 hashing, admin panel.
 
-## Quick Start
+## Architecture at a glance
 
-### Prerequisites
+```
+Browser (index.html, SSE) ──HTTP──▶ FastAPI (main.py)
+                                      │
+                    ┌─────────────────┼──────────────────┐
+                    ▼                 ▼                  ▼
+              amp.py (AMP        gamdl 3.8.5        flac_script.sh
+              catalog search /   subprocess          (FFmpeg)
+              storefront resolve)     │
+                                      ▼
+                             wrapper-v2 (Docker)
+                          HTTP :8080 / decrypt :10021
+                          loads Apple's Android libs,
+                          does FairPlay key exchange
+                                      │
+                                      ▼
+                                    rclone ──▶ cloud storage
+```
+
+## Prerequisites
 
 - Python 3.12+
 - FFmpeg
-- rclone (for OneDrive)
-- gamdl (Apple Music downloader)
-- Wrapper service (for DRM decryption)
+- rclone (configured remote + mount for cloud sync)
+- gamdl **3.8.5** (`pip install gamdl==3.8.5`)
+- **wrapper-v2** running in Docker (see its own build/run notes — ARM64 requires
+  building the image on an x86_64 host and shipping it over)
+- A valid Apple Music subscription (the wrapper logs in with it; 2FA on first run)
 
-### Installation
+> No `cookies.txt` is needed. Authentication is handled by the wrapper's Apple login,
+> and the AMP developer token is scraped automatically from the Apple Music web player.
+
+## Installation
 
 ```bash
 git clone <repo>
 cd SongsAPI
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt          # includes gamdl==3.8.5, httpx, fastapi, ...
 
 # Initialize database
 python3 -c "from models.database import initialize_database; initialize_database()"
@@ -42,53 +77,72 @@ python3 -c "from models.database import initialize_database; initialize_database
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Access at `http://localhost:8000`
+Make sure wrapper-v2 is up and authenticated first:
 
-### Configuration
+```bash
+curl -s http://127.0.0.1:8080/me | jq .   # expect auth.state = "authenticated"
+```
+
+## Configuration
 
 Edit `Secrets.py`:
 
 ```python
+from pathlib import Path
+
+
 class Link:
-    # iTunes API endpoint (no change needed)
-    ITUNES_URL = "https://itunes.apple.com/search"
-    # Local download directory for initial album storage
-    DOWNLOAD_DIR = Path("/home/ubuntu/SongsAPI/Albums")
-    # Final destination (OneDrive mounted via rclone)
-    DESTINATION_DIR = Path("/mnt/music")
-    # Apple Music cookies for gamdl authentication
-    COOKIES_URL = Path("/home/ubuntu/.gamdl/cookies.txt")
-    # Wrapper service for DRM decryption (running on separate VPS)
-    WRAPPER_ACCOUNT_URL = "http://wrapper-vps-ip:30020"
-    WRAPPER_M3U8_IP = "wrapper-vps-ip:20020"
-    WRAPPER_DECRYPT_IP = "wrapper-vps-ip:10020"
-    # Public access URL (if deployed with domain)
-    PUBLIC_URL = "https://your-domain.com/songs-api"
-    # Local testing URL
-    LOCALHOST_URL = "http://localhost:8000"
-    # API base path, you dont need this and can set it to '/'
-    BASE_URL = "/songs-api"
-    # Shell interpreter path
-    BASH_URL = "/usr/bin/bash"
-    # FLAC conversion script, this was my script name you can name it whatever
-    CONVERT_TO_FLAC = "flac_script.sh"
-    # Audio codec (options: alac, aac, opus)
-    CODEC = "alac"
-    # OneDrive mount point for rclone (format: "remote_name:/path/to/mount")
-    RCLONE_DRIVE_MOUNT = "YOUR_ONEDRIVE_DRIVE_NAME:/LOCATION/TO/MOUNT"
+    # ---- Search / catalog ----
+    ITUNES_URL = "https://itunes.apple.com/search"   # fallback search only
+    AMP_BASE_URL = "https://amp-api.music.apple.com"  # primary catalog API
+    STOREFRONT = "in"                                 # must match the wrapper account's storefront
+
+    # ---- Paths ----
+    # initial download staging, this folder exists in the project directory as "Albums" containing a flac_script.sh file
+    DOWNLOAD_DIR = Path("/Path/To/Your/Temporary/Album/Storage")    
     
+    DESTINATION_DIR = Path("/mnt/music") # rclone mount (final location)
+
+    # ---- wrapper-v2 ----
+    # Single base URL for HTTP + separate host/port for the raw TCP decrypt socket.
+    # 10021 avoids colliding with an old wrapper on 10020; move to 10020 once retired.
+    WRAPPER_URL = "http://127.0.0.1:8080"
+    WRAPPER_DECRYPT_HOST = "127.0.0.1"
+    WRAPPER_DECRYPT_PORT = 10021
+
+    # ---- URLs ----
+    PUBLIC_URL = "https://your-domain.com/songs-api"      # external, if reverse-proxied
+    LOCALHOST_URL = "http://localhost:8000"
+    BASE_URL = "/songs-api"                               # API base path ('/' if none)
+
+    # ---- Conversion ----
+    BASH_URL = "/usr/bin/bash"
+    CONVERT_TO_FLAC = "flac_script.sh"                    # your FFmpeg script name
+    CODEC = "alac"                                        # alac (lossless) | aac | opus
+
+    # ---- Cloud ----
+    RCLONE_DRIVE_MOUNT = "YOUR_REMOTE_NAME:/PATH/TO/MOUNT"
+
+    @classmethod
+    def setup(cls):
+        cls.DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class Token:
-	"""
-	Credentials Here
-	"""
-	DB_NAME = 
-	SECRET_KEY=
-	ADMIN_USERNAME=
-	ADMIN_PASSWORD=
+    """Credentials for SQLite auth and Apple Music AMP token scraping."""
+    DB_NAME = ""
+    SECRET_KEY = ""
+    ADMIN_USERNAME = ""
+    ADMIN_PASSWORD = ""
 ```
 
-### Systemd Service
+
+> `.m4a` is a container, not a codec. With `CODEC = "alac"`, downloaded `.m4a` files
+> hold **ALAC (lossless)**, so the FLAC conversion is a true lossless transcode. Verify
+> a file with `ffprobe -show_entries stream=codec_name ...` — `alac` good, `aac` means
+> a lossy fallback slipped in.
+
+### Systemd service
 
 ```ini
 [Unit]
@@ -100,7 +154,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/SongsAPI
 Environment="PATH=/home/ubuntu/SongsAPI/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/home/ubuntu/SongsAPI/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --loop uvloop --http httptools
+ExecStart=/home/ubuntu/SongsAPI/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 TimeoutStopSec=300
@@ -114,225 +168,72 @@ SyslogIdentifier=songs-api
 WantedBy=multi-user.target
 ```
 
+> Do **not** add `--loop uvloop --http httptools` unless those packages are installed —
+> the service fails to start otherwise. Plain asyncio is fine. Do **not** use
+> `--workers`; it breaks SSE streaming. For horizontal scale, front multiple instances
+> with nginx instead.
+
 ## Usage
 
-### Web Interface
+### Web interface
 
-1. **Search**: Type album name to find on iTunes
-2. **Pin**: Add to "Active Downloads" section
-3. **Upload**: Click UPLOAD button to start full workflow
-4. **Monitor**: Watch real-time logs in logbox
-5. **Complete**: Album auto-removes from pinned when done
+1. **Search** an artist or album, or **paste** an Apple Music URL (any region).
+2. **Upload** for the full pipeline, or run steps individually.
+3. **Monitor** live logs per album.
+4. On success the album auto-clears from *Active Downloads*.
 
-### Individual Operations
+> The browser tab must stay open for the duration — progress streams over SSE, so
+> closing the tab ends the run. (A background job queue would remove this constraint;
+> not yet implemented.)
 
-- **Download Only**: Click "1. Download"
-- **Rename Only**: Click "2. Rename" → customize names
-- **Convert Only**: Click "3. → FLAC"
-- **Move Only**: Click "4. Move"
 
-### Direct URL Lookup
 
-Paste Apple Music URL instead of searching (note: must be available in your region)
+The UI matches loosely (`includes("[DONE]")` / `includes("[ERROR]")`) for single-step
+actions, and on exact strings inside the one-click Upload chain so one step can't
+resolve on another's message.
 
-## API Endpoints
-
-### Authentication
-
-- `POST /api/login` - Login with username/password
-- `POST /api/logout` - Clear session
-- `GET /api/user-info` - Current user + admin status
-
-### Albums
-
-- `GET /albums/search?q=query&limit=20` - iTunes search (SSE)
-- `GET /albums/lookup?url=appleMusicUrl` - Direct lookup
-- `POST /albums/download` - Download + metadata (SSE)
-- `POST /albums/rename-folder` - Rename folder (SSE)
-- `POST /albums/convert-flac` - Convert to FLAC (SSE)
-- `POST /albums/move-album` - Move to destination (SSE)
-
-### Admin
-
-- `GET /admin` - Admin panel (admin only)
-- `GET /api/users` - List users
-- `POST /api/users/create` - Create user
-- `POST /api/users/delete` - Delete user
-- `POST /api/users/change-password` - Change password
-
-### Response Format
-
-SSE endpoints return:
-
-```
-data: [OPERATION] message\n\n
-data: [DONE]\n\n
-```
-
-JSON endpoints return album metadata with collection_id, artist, album_name, year, etc.
-
-## Architecture
-
-### File Structure
+## File structure
 
 ```
 ├── main.py                 # FastAPI app + all endpoints
+├── amp.py                  # Apple Music API client (token, search, equivalents, UPC)
 ├── Secrets.py              # Configuration (paths, URLs, credentials)
+├── flac_script.sh          # Parallel FFmpeg ALAC→FLAC converter
 ├── models/database.py      # SQLite ORM + auth
-├── templates/
-│   ├── index.html          # Main app
-│   ├── login.html          # Login
-│   └── admin.html          # Admin panel
-├── convert.ps1             # FFmpeg conversion script
-└── cookies.txt             # Apple Music cookies (gamdl)
+└── templates/
+    ├── index.html          # Main app
+    ├── login.html          # Login
+    └── admin.html          # Admin panel
 ```
 
-### Album Storage Structure
+## Workflow & storage
 
-#### Download Phase
-
-```
-/home/ubuntu/SongsAPI/Albums/
-├── Emotional Oranges/
-│   ├── STILL EMO/
-│   │   ├── 01 Wrong Hands.m4a
-│   │   ├── 02 Be Somebody (feat. Tkay Maidza).m4a
-│   │   └── 03 Justified.m4a
-│   └── The Juice_ Vol. III/          # Special chars converted to _
-│       ├── 01 Track 1.m4a
-│       └── 02 Track 2.m4a
-├── Drake/
-│   └── If You're Reading This It's Too Late/
-│       ├── 01 Song.m4a
-│       └── 02 Song.m4a
-├── Taylor Swift/
-│   └── Red (Deluxe Version)/
-│       └── [16 tracks].m4a
-└── Compilations/                     # Multi-artist albums
-    └── Various Artists Album/
-        └── [tracks].m4a
-```
-
-#### After Rename
-
-```
-/home/ubuntu/SongsAPI/Albums/
-├── Emotional Oranges - STILL EMO/       # Renamed to Artist - Album
-│   ├── 01 Wrong Hands.m4a
-│   ├── 02 Be Somebody (feat. Tkay Maidza).m4a
-│   └── 03 Justified.m4a
-├── Drake - If You're Reading This It's Too Late/
-│   ├── 01 Song.m4a
-│   └── 02 Song.m4a
-└── Taylor Swift - Red (Deluxe Version)/
-    └── [16 tracks].m4a
-```
-
-#### After Conversion
-
-```
-/home/ubuntu/SongsAPI/Albums/
-├── Emotional Oranges - STILL EMO/
-│   ├── 01 Wrong Hands.flac            # Converted to FLAC
-│   ├── 02 Be Somebody.flac
-│   └── 03 Justified.flac
-├── Drake - If You're Reading This It's Too Late/
-│   ├── 01 Song.flac
-│   └── 02 Song.flac
-└── Taylor Swift - Red (Deluxe Version)/
-    └── [16 tracks].flac
-```
-
-#### After Move to OneDrive
-
-```
-/mnt/music/                             # OneDrive mount via rclone
-├── Emotional Oranges - STILL EMO/
-│   ├── 01 Wrong Hands.flac
-│   ├── 02 Be Somebody.flac
-│   └── 03 Justified.flac
-├── Drake - If You're Reading This It's Too Late/
-│   ├── 01 Song.flac
-│   └── 02 Song.flac
-└── Taylor Swift - Red (Deluxe Version)/
-    └── [16 tracks].flac
-```
-
-## Workflow Summary
-
-|Stage|Location|Format|Folder Name|
+| Stage | Location | Format | Folder name |
 |---|---|---|---|
-|1. Download|`Albums/Artist/Album/`|`.m4a`|`Album Name`|
-|2. Rename|`Albums/`|`.m4a`|`Artist - Album Name`|
-|3. Convert|`Albums/`|`.flac`|`Artist - Album Name`|
-|4. Move|`/mnt/music/`|`.flac`|`Artist - Album Name`|
+| 1. Download | `Albums/Artist/Album/` | `.m4a` (ALAC) | `Album Name` |
+| 2. Rename | `Albums/` | `.m4a` (ALAC) | `Artist - Album Name` |
+| 3. Convert | `Albums/` | `.flac` | `Artist - Album Name` |
+| 4. Move | `DESTINATION_DIR` | `.flac` | `Artist - Album Name` |
 
-## Key Points
+- gamdl lays files out by `Artist/Album`; multi-artist releases go under `Compilations/`.
+- Windows-illegal characters (`: ? | " < > *`) become `_`, so rename/convert/move locate
+  the folder by scanning rather than exact name, falling back to most-recently-modified.
+- After a verified move, the local source folder is deleted — cloud becomes the source of truth.
 
-- **Initial Downloads**: Organized by artist → album (gamdl default)
-- **Special Characters**: Converted to underscores (`The Juice: Vol. III` → `The Juice_ Vol. III`)
-- **Rename Logic**: Flattens to `Artist - Album` at root of Albums folder
-- **Conversion**: In-place FLAC conversion while in Albums folder
-- **Final Move**: Complete folder transferred to OneDrive
-- **Compilations**: Stored separately in `Compilations/` folder if multi-artist
-- **Cleanup**: Source folder deleted after successful move to OneDrive
 
-## Example Full Workflow
 
-```
-1. Search "Emotional Oranges Still Emo"
-   ↓
-2. Download to: /home/ubuntu/SongsAPI/Albums/Emotional Oranges/STILL EMO/
-   [M4A files only]
-   ↓
-3. Rename folder to: /home/ubuntu/SongsAPI/Albums/Emotional Oranges - STILL EMO/
-   [M4A files, same location]
-   ↓
-4. Convert in-place: /home/ubuntu/SongsAPI/Albums/Emotional Oranges - STILL EMO/
-   [FLAC files replace M4A]
-   ↓
-5. Move entire folder to: /mnt/music/Emotional Oranges - STILL EMO/
-   [FLAC files now on OneDrive]
-   ↓
-6. Source folder deleted from Albums/
-   [OneDrive is now source of truth]
-```
+## Tech stack
 
-## Troubleshooting
-
-### Download Fails
-
-- Verify wrapper service is running: `curl http://wrapper-ip:30020`
-- Check cookies.txt is valid
-- Try searching instead of URL lookup (regional availability)
-
-### Folder Not Found
-
-- Auto-detection uses normalized names + recent file logic
-- Check manual path: `/home/ubuntu/SongsAPI/Albums/{artist}/`
-
-### Unresponsive Website
-
-- Don't use uvicorn `--workers` (breaks SSE streaming)
-- Use single async worker: `uvicorn main:app --host 0.0.0.0 --port 8000`
-- For multiple instances, use nginx reverse proxy
-## Security
-
-- **Passwords**: Argon2 hashing (no truncation limits)
-- **Sessions**: Signed cookies with FastAPI SessionMiddleware
-- **CORS**: Restricted to localhost (configure for production)
-- **Admin Role**: Required for user management endpoints
-- **Credentials**: Store Secrets.py securely (never commit)
-
-## Tech Stack
-
-|Component|Technology|
+| Component | Technology |
 |---|---|
-|Backend|FastAPI, Uvicorn, SQLite|
-|Frontend|HTML5, CSS3, ES6+ JavaScript|
-|Audio|gamdl, FFmpeg, mutagen|
-|Cloud|rclone, OneDrive|
-|Auth|argon2, Starlette Sessions|
-|Process|subprocess, threading, asyncio|
+| Backend | FastAPI, Uvicorn, SQLite |
+| Frontend | HTML5, CSS3, vanilla ES6+ (SSE, localStorage) |
+| Catalog | Apple Music AMP API (+ iTunes fallback) |
+| Audio | gamdl 3.8.5, FFmpeg, mutagen |
+| DRM | wrapper-v2 (Docker) |
+| Cloud | rclone |
+| Auth | argon2, Starlette Sessions |
+| Process | subprocess, threading, asyncio |
 
-**Note**: Requires valid Apple Music account and wrapper service for DRM decryption. Regional availability may vary by country.
+**Note:** Requires a valid Apple Music subscription and a running wrapper-v2 instance.
+Catalog availability varies by storefront.
