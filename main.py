@@ -3,7 +3,6 @@ import queue
 import re
 import shutil
 import threading
-import time
 from pathlib import Path
 
 import httpx
@@ -21,7 +20,7 @@ from starlette.responses import StreamingResponse
 from Secrets import Link
 import os
 
-from amp import amp_search, amp_equivalent, amp_by_upc, STOREFRONT
+from amp import amp_search, amp_tracks, amp_equivalent, STOREFRONT
 from models.database import *
 
 app = FastAPI()
@@ -196,7 +195,6 @@ async def searchAlbum(q: str, limit: int = 25):
     return {"results": [{**a, "index": i} for i, a in enumerate(albums)]}
 
 
-
 def searchAlbumItunes(q: str, limit: int = 50):
     """
     Used to search for albums using the iTunes Search API.
@@ -245,6 +243,20 @@ def searchAlbumItunes(q: str, limit: int = 50):
 
 
 
+@app.get("/albums/tracks")
+@app.get(f"{Link.BASE_URL}/albums/tracks")
+async def albumTracks(collection_id: int):
+    """
+    Shows Tracks in an album and fetches it on demand when UI is expanded
+    """
+    try:
+        tracks = await amp_tracks(str(collection_id))
+    except Exception as e:
+        print(f"[TRACKS] AMP failed for {collection_id}: {e}")
+        raise HTTPException(status_code=502, detail="Could not fetch tracklist")
+    return {"tracks": tracks}
+
+
 # --------------------- URL LOOKUPS ---------------------
 @app.get("/albums/lookup")
 @app.get(f"{Link.BASE_URL}/albums/lookup")
@@ -272,59 +284,6 @@ async def urlAlbumLookup(url: str = None, collection_id: int = None):
         )
     return album
 
-
-# def urlAlbumLookup(url: str, collection_id: int = None):
-#     """
-#     If the search function does not result in the album that you want to download, the directly search the URL
-#     Lookup album directly from an Apple Music URL.
-#     Supports region-specific storefronts.
-#
-#     """
-#
-#     if url and not collection_id:
-#
-#         parts = url.rstrip("/").split("/")
-#
-#         try:
-#             country = parts[3]  # music.apple.com/in/...
-#             collection_id = int(parts[-1])
-#         except (ValueError, IndexError):
-#             raise HTTPException(status_code=400, detail="Invalid URL Format")
-#
-#         response = requests.get(
-#             "https://itunes.apple.com/lookup",
-#             params={
-#                 "id": collection_id,
-#                 "entity": "album",
-#                 "country": country
-#             }
-#         )
-#
-#         results = response.json().get("results", [])
-#
-#         album = next(
-#             (r for r in results if r.get("wrapperType") == "collection"),
-#             None
-#         )
-#
-#         if not album:
-#             raise HTTPException(status_code=404, detail="Album not found")
-#
-#         return {
-#             "collection_id": album["collectionId"],
-#             "album_name": album["collectionName"],
-#             "artist": album["artistName"],
-#             "apple_music_url": album["collectionViewUrl"],
-#             "year": album["releaseDate"][:4]
-#             if album.get("releaseDate")
-#             else "N/A",
-#             "country": country
-#         }
-#
-#     return None
-
-
-# --------------------- REQUEST CLASSES ---------------------
 class DownloadRequest(BaseModel):
     collection_id: int
     results: list[dict]  # Full list of search results to pick the album from
@@ -468,93 +427,6 @@ async def albumDownload(body: DownloadRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-
-# async def albumDownload(body: DownloadRequest): # async functions important for yielding to SSE otherwise it would not run
-#     """
-#     Selected albums will be downloaded using gamdl which is a command line tool that can download albums from Apple Music.
-#     """
-#     match = None
-#     for album in body.results:
-#         if album["collection_id"] == body.collection_id:
-#             match = album
-#             break
-#
-#     if match is None:
-#         raise HTTPException(status_code=404, detail="Album not found")
-#
-#     url = match["apple_music_url"]
-#
-#     async def streamOutput():
-#
-#         env = {**os.environ, "PYTHONIOENCODING": "utf-8"} # encoding for special characters in album
-#
-#         process = subprocess.Popen( # args containing wrapper elements
-#             ["gamdl", "--song-codec-priority", Link.CODEC, "--use-wrapper",
-#              "--wrapper-url", Link.WRAPPER_URL,
-#              "--wrapper-decrypt-host", Link.WRAPPER_DECRYPT_HOST,
-#              "--wrapper-decrypt-port", str(Link.WRAPPER_DECRYPT_PORT),
-#              "--output-path", str(Link.DOWNLOAD_DIR), url],
-#             stdout=subprocess.PIPE,
-#             stderr=subprocess.PIPE,  # capturing both errs and output from gamdl process
-#             text=True,
-#             encoding='utf-8',
-#             errors='replace',
-#             bufsize=0,  # 0 buffering
-#             env=env
-#         )
-#
-#         q = queue.Queue()
-#         def enqueue(stream, label):
-#             for line in stream:
-#                 stripped = line.rstrip()
-#                 if not stripped.startswith("[download]"):
-#                     q.put((label,stripped))
-#             q.put((label, None))
-#
-#         t1 = threading.Thread(target=enqueue, args=(process.stdout, "stdout"))
-#         t2 = threading.Thread(target=enqueue, args=(process.stderr, "stderr"))
-#
-#         t1.start()
-#         t2.start()
-#
-#         finished = 0
-#         while finished < 2:  # if thread is still running
-#             label, line = q.get()
-#             if line is None:
-#                 finished += 1
-#                 continue
-#             print(f"[{label}] {line}", flush=True)  # Debug to terminal
-#             yield f"data: {line}\n\n"  # Send line to client as SSE
-#             await asyncio.sleep(0)
-#         t1.join()
-#         t2.join()
-#         process.wait()
-#
-#         print(f"[gamdl exited with code {process.returncode}]\n\n")
-#
-#         if process.returncode == 0:
-#             # folder = Link.DOWNLOAD_DIR / f"{match['artist']}" / f"{match['album_name']}"
-#             try:
-#                 yield "data: [METADATA] Updating Year Metadata.../n/n"
-#
-#                 # Running the update_year in a thread pool to avoid blocking the main event loop
-#                 async for log_message in update_year(match["artist"], match["album_name"], match["year"]):
-#                     yield f"data: {log_message}\n\n"
-#                 yield "data: [METADATA][UPDATE YEAR] Year Updated!\n\n"
-#                 yield "data: [ALBUM DOWNLOAD][DONE]\n\n"
-#
-#             except Exception as e:
-#                 print(f"[ERROR] Metadata update failed: {e}")
-#                 yield f"data: [WARNING] Metadata update failed: {str(e)}\n\n"
-#         else:
-#             yield f"data: [GAMDL][ERROR] gamdl exited with code {process.returncode}\n\n"
-#     return StreamingResponse(streamOutput(),media_type="text/event-stream",headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-# --------------------- POST ENDPOINT - METADATA (YEAR) ---------------------
-
-
 
 
 async def update_year(artist: str, album_name: str, year: str):

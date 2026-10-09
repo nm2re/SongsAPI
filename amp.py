@@ -5,7 +5,6 @@ from Secrets import Link
 from gamdl.api.apple_music import AppleMusicApi
 
 
-
 STOREFRONT = "in" # matching the accounts country
 
 _token: str | None = None
@@ -52,9 +51,33 @@ def _album_out(a: dict) -> dict:
         "track_count": at.get("trackCount"),
         "is_single": at.get("isSingle", False),
         "is_compilation": at.get("isCompilation", False),
+        "is_explicit": at.get("contentRating") == "explicit", # explicit tag
         "upc": at.get("upc"),
     }
 
+
+
+async def amp_tracks(album_id: str) -> list[dict]:
+    """
+    Displays all tracks of a particular album
+    """
+    data = await amp_get(f"/v1/catalog/{STOREFRONT}/albums/{album_id}",{"include": "tracks"},)
+    d = data.get("data", [])
+    if not d:
+        return []
+
+    tracks = d[0].get("relationships", {}).get("tracks", {}).get("data", [])
+    out = []
+    for t in tracks:
+        ta = t.get("attributes", {})
+        out.append({
+            "number": ta.get("trackNumber"),
+            "disc": ta.get("discNumber", 1),
+            "name": ta.get("name", "Unknown"),
+            "duration_ms": ta.get("durationInMillis"),
+            "is_explicit": ta.get("contentRating") == "explicit",
+        })
+    return out
 
 async def amp_search(term: str, limit: int = 25) -> list[dict]:
     data = await amp_get(
