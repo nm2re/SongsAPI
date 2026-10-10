@@ -591,6 +591,70 @@
             text-transform: uppercase;
             font-weight: 500;
         }
+
+        .explicit-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            margin-left: 8px;
+            background: var(--muted);
+            color: var(--bg);
+            font-size: 9px;
+            font-weight: 700;
+            border-radius: 2px;
+            vertical-align: middle;
+            flex-shrink: 0;
+        }
+
+        .btn-tracks {
+            background: transparent;
+            border: 1px solid var(--border-bright);
+            color: var(--muted);
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            font-size: 13px;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+        .btn-tracks:hover { border-color: var(--accent); color: var(--accent); }
+
+        .tracklist {
+            border-top: 1px solid var(--border);
+            background: #0a0a0a;
+            padding: 0;
+            display: none;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .tracklist::-webkit-scrollbar { width: 4px; }
+        .tracklist::-webkit-scrollbar-thumb { background: var(--border-bright); }
+
+        .track-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 20px 8px 64px;
+            font-size: 11px;
+            border-bottom: 1px solid #141414;
+        }
+        .track-row:last-child { border-bottom: none; }
+        .track-num { color: var(--muted); width: 22px; text-align: right; flex-shrink: 0; }
+        .track-name { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .track-dur { color: var(--muted); flex-shrink: 0; letter-spacing: 0.05em; }
+        .track-exp {
+            font-size: 8px; font-weight: 700; color: var(--bg);
+            background: var(--muted); border-radius: 2px;
+            padding: 1px 3px; flex-shrink: 0;
+        }
+        .tracklist-loading, .tracklist-error {
+            padding: 16px 20px 16px 64px; font-size: 11px; color: var(--muted);
+        }
+        .tracklist-error { color: var(--red); }
     </style>
 </head>
 <body>
@@ -1147,13 +1211,14 @@
         <button class="btn-close" onclick="removeAlbumCard(${album.collection_id})" title="Remove from pinned">×</button>
         <div class="album-index">-</div>
         <div class="album-info">
-            <div class="album-name">${album.album_name}</div>
+        <div class="album-name">${album.album_name}${album.is_explicit ? '<span class="explicit-badge" title="Explicit">E</span>' : ''}</div>
             <div class="album-meta">
                 ${album.artist}
                 <span class="album-year">${album.year}</span>
             </div>
         </div>
         <div class="album-actions">
+            <button class="btn-tracks" onclick="toggleTracks(${album.collection_id})" title="Show tracklist">▾</button>
             <label class="overwrite-toggle" title="Overwrite if already exists at destination">
                 <input type="checkbox" id="overwrite-${album.collection_id}">
                 <span class="overwrite-label">overwrite</span>
@@ -1176,9 +1241,58 @@
             <span class="status-tag" id="status-${album.collection_id}"></span>
         </div>
     </div>
+    <div class="tracklist" id="tracks-${album.collection_id}"></div>
     <div class="log-box" id="log-${album.collection_id}"></div>
 `;
         container.appendChild(card);
+    }
+
+    function fmtDur(ms) {
+        // track format to translate tracks duration from MS to M:SS
+        if (!ms) return "";
+        const s = Math.round(ms / 1000);
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    }
+
+    async function toggleTracks(collectionId) {
+        const panel = document.getElementById(`tracks-${collectionId}`);
+        if (!panel) return;
+
+        const open = panel.style.display === "block";
+        if (open) { panel.style.display = "none"; return; }
+
+        panel.style.display = "block";
+
+        if (panel.dataset.loaded === "1") return;   // already fetched
+
+        panel.innerHTML = `<div class="tracklist-loading">Loading tracklist...</div>`;
+
+        try {
+            const res = await fetch(
+                `${API_BASE_URL}/albums/tracks?collection_id=${collectionId}`,
+                { credentials: "include" }
+            );
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const { tracks } = await res.json();
+
+            if (!tracks.length) {
+                panel.innerHTML = `<div class="tracklist-error">No tracks found</div>`;
+                return;
+            }
+
+            panel.innerHTML = tracks.map(t => `
+                <div class="track-row">
+                    <span class="track-num">${t.number ?? "-"}</span>
+                    <span class="track-name">${t.name}</span>
+                    ${t.is_explicit ? '<span class="track-exp">E</span>' : ''}
+                    <span class="track-dur">${fmtDur(t.duration_ms)}</span>
+                </div>
+            `).join("");
+            panel.dataset.loaded = "1";
+
+        } catch (err) {
+            panel.innerHTML = `<div class="tracklist-error">Failed to load tracklist: ${err.message}</div>`;
+        }
     }
 
     // Function to remove a pinned album card
